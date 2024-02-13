@@ -1,4 +1,4 @@
-# julia-downgrade-compat-action
+# julia-downgrade-compat
 
 **Easy-peasy checking of compat lower bounds in your Julia package.**
 
@@ -35,7 +35,7 @@ bounds are too low.
 ## Usage
 
 ```yaml
-- uses: cjdoris/julia-downgrade-compat-action@v1
+- uses: julia-actions/julia-downgrade-compat@v1
   with:
     # Comma-separated list of packages to not downgrade. This should include any
     # standard libraries because these have versions tied to the Julia version.
@@ -61,11 +61,11 @@ jobs:
       matrix:
         version: ['1', '1.6']
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
-      - uses: cjdoris/julia-downgrade-compat-action@v1
+      - uses: julia-actions/julia-downgrade-compat@v1
         if: ${{ matrix.version == '1.6' }}
         with:
           skip: Pkg,TOML
