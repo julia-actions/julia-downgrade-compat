@@ -1,5 +1,8 @@
 # julia-downgrade-compat
 
+[![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
+[![Tests](https://github.com/julia-actions/julia-downgrade-compat/actions/workflows/tests.yml/badge.svg)](https://github.com/julia-actions/julia-downgrade-compat/actions/workflows/tests.yml)
+
 **Easy-peasy checking of compat lower bounds in your Julia package.**
 
 Did you set your compat entries a long time ago? Are you sure they are still accurate?
