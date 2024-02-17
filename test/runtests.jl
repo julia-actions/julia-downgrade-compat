@@ -98,6 +98,6 @@ end
 
 @testset "julia-downgrade-compat" begin
     @testset "basic $(spec.strict) $(spec.ignore) $file" for spec in specs, file in ["Project.toml", "JuliaProject.toml"]
-        test_downgrade(; spec..., file)
+        test_downgrade(; spec..., file=file)
     end
 end
