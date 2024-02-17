@@ -5,10 +5,11 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 specs = [
     (
         strict = "v0",
-        ignore = "Pkg0",
+        ignore = "Pkg0, Pkg00",
         compats = [
             ("julia", "1.6", "1.6"),
             ("Pkg0", "1.2", "1.2"),
+            ("Pkg00", "1.3", "1.3"),
             ("Pkg1", "1", "~1.0.0"),
             ("Pkg2", "1.2", "~1.2.0"),
             ("Pkg3", "1.2.3", "~1.2.3"),
@@ -26,10 +27,11 @@ specs = [
     )
     (
         strict = "true",
-        ignore = "Pkg0",
+        ignore = "Pkg0, Pkg00",
         compats = [
             ("julia", "1.6", "1.6"),
             ("Pkg0", "1.2", "1.2"),
+            ("Pkg00", "1.3", "1.3"),
             ("Pkg1", "1", "=1.0.0"),
             ("Pkg2", "1.2", "=1.2.0"),
             ("Pkg3", "1.2.3", "=1.2.3"),
@@ -47,10 +49,11 @@ specs = [
     )
     (
         strict = "false",
-        ignore = "Pkg0",
+        ignore = "Pkg0, Pkg00",
         compats = [
             ("julia", "1.6", "1.6"),
             ("Pkg0", "1.2", "1.2"),
+            ("Pkg00", "1.3", "1.3"),
             ("Pkg1", "1", "~1.0.0"),
             ("Pkg2", "1.2", "~1.2.0"),
             ("Pkg3", "1.2.3", "~1.2.3"),
@@ -85,13 +88,20 @@ function test_downgrade(; strict, ignore, compats, file)
     @info "testing $strict $ignore $file"
     mktempdir() do dir
         cd(dir) do 
-            toml1 = make_toml([(pkg, compat) for (pkg, compat, _) in compats])
-            toml2 = make_toml([(pkg, compat) for (pkg, _, compat) in compats])
-            write("Project.toml", toml1)
-            run(`$(Base.julia_cmd()) $downgrade_jl $ignore $strict`)
-            toml3 = read("Project.toml", String)
-            @test toml3 != toml1
-            @test toml3 == toml2
+            toml1a = make_toml([(pkg, compat) for (pkg, compat, _) in compats])
+            toml2a = make_toml([(pkg, compat) for (pkg, _, compat) in compats])
+            toml1b = toml1a * "# foo\n"
+            toml2b = toml2a * "# foo\n"
+            mkdir("foo")
+            write(file, toml1a)
+            write(joinpath("foo", file), toml1b)
+            run(`$(Base.julia_cmd()) $downgrade_jl $ignore $strict "., foo"`)
+            toml3a = read(file, String)
+            toml3b = read(joinpath("foo", file), String)
+            @test toml3a != toml1a
+            @test toml3a == toml2a
+            @test toml3b != toml1b
+            @test toml3b == toml2b
         end
     end
 end
