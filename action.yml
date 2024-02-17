@@ -7,10 +7,13 @@ inputs:
   strict:
     description: 'true, false or v0. Default: v0.'
     default: 'v0'
+  projects:
+    description: 'Comma-separated list of Julia projects to modify.'
+    default: '.'
 runs:
   using: "composite"
   steps:
-    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.strict }}"
+    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.strict }}" "${{ inputs.projects }}"
       shell: bash
 branding:
   icon: trending-down

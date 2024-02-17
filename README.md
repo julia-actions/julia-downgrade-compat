@@ -52,6 +52,12 @@ bounds are too low.
     # (not strict) or 'v0' (strict for "0.*.*" and not strict otherwise).
     # Default: 'v0'
     strict: ''
+
+    # Comma-separated list of Julia projects to modify. The Project.toml files in all of
+    # these directories will be modified.
+    # Example: ., test, docs
+    # Default: .
+    projects: ''
 ```
 
 ## Example
@@ -71,7 +77,7 @@ jobs:
       - uses: julia-actions/julia-downgrade-compat@v1
         if: ${{ matrix.version == '1.6' }}
         with:
-          skip: Pkg,TOML
+          skip: Pkg, TOML
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 ```

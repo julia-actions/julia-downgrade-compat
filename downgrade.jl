@@ -62,14 +62,18 @@ function downgrade(file, ignore_pkgs, strict)
     end
 end
 
-ignore_pkgs = map(strip, split(ARGS[1], ",", keepempty=false))
+ignore_pkgs = filter(!isempty, map(strip, split(ARGS[1], ",")))
 strict = ARGS[2]
+dirs = filter(!isempty, map(strip, split(ARGS[3], ",")))
 
 strict in ["true", "false", "v0"] || error("strict must be true, false or v0")
 
-project_files = filter(isfile, ["Project.toml", "JuliaProject.toml"])
-isempty(project_files) && error("could not find Project.toml")
-
-for file in project_files
-    downgrade(file, ignore_pkgs, strict)
+for dir in dirs
+    files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
+    filter!(isfile, files)
+    isempty(files) && error("could not find Project.toml or JuliaProject.toml in $dir")
+    for file in files
+        @info "downgrading $file"
+        downgrade(file, ignore_pkgs, strict)
+    end
 end
