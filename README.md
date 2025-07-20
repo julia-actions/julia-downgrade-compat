@@ -58,11 +58,23 @@ bounds are too low.
     # Example: ., test, docs
     # Default: .
     projects: ''
+
+    # Use Resolver.jl for more accurate downgrade resolution.
+    # Options: 'false' (use traditional compat modification), 'deps' (minimize direct deps),
+    # 'alldeps' (minimize deps + weakdeps), 'all' (minimize all packages)
+    # Default: 'false'
+    use_resolver: ''
+
+    # Julia version to use with the resolver (requires Julia 1.9+)
+    # Default: '1.11'
+    resolver_julia_version: ''
 ```
 
-## Example
+## Examples
 
-For example, here is the action being used as part of a standard Julia test workflow:
+### Traditional compat-based downgrade testing
+
+Here is the action being used as part of a standard Julia test workflow:
 ```yaml
 jobs:
   test:
@@ -82,15 +94,57 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
 ```
 
-The action requires Julia to be installed, so must occur after `setup-julia`. It runs just
-before `julia-buildpkg` so that the Project.toml is modified before installing any packages.
+### Advanced resolver-based downgrade testing
 
-In this example, we are running the test suite with the latest version of Julia 1.* and
-also Julia 1.6, corresponding to `matrix.version`. The `if:` entry only runs the downgrade
-action when it is Julia 1.6 running. This means we get one run using latest Julia 1.* and
-latest packages, and one run using Julia 1.6 and old packages.
+For more accurate downgrade testing using Resolver.jl:
+```yaml
+jobs:
+  test:
+    strategy:
+      matrix:
+        downgrade_mode: ['deps', 'alldeps']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.11'
+      - uses: julia-actions/julia-downgrade-compat@v1
+        with:
+          use_resolver: ${{ matrix.downgrade_mode }}
+          skip: Pkg, TOML
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+```
+
+The action requires Julia to be installed, so must occur after `setup-julia`. It runs just
+before `julia-buildpkg` so that the Project.toml is modified or resolved before installing any packages.
+
+In the traditional example, we run the test suite with the latest version of Julia 1.* and
+also Julia 1.6. The `if:` entry only runs the downgrade action when it is Julia 1.6 running.
+
+In the resolver example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios. This provides more targeted testing of your actual compat bounds without being affected by transitive dependency issues.
 
 The `skip:` input says that we should not attempt to downgrade `Pkg` or `TOML`.
+
+## Traditional vs Resolver-based Approaches
+
+### Traditional Approach (default)
+- Modifies compat entries in Project.toml to force installation of older versions
+- Simple and fast, but may not always find a valid resolution
+- Tests the literal bounds you specify, but not necessarily what users will actually get
+- May fail if older versions have incompatible dependencies
+
+### Resolver-based Approach (use_resolver)
+- Uses Resolver.jl's advanced SAT-based resolver for accurate downgrade resolution
+- Finds actual minimal versions that satisfy all constraints
+- Options:
+  - `deps`: Minimize only your direct dependencies (recommended)
+  - `alldeps`: Minimize direct dependencies and weak dependencies 
+  - `all`: Minimize all packages (may test issues in transitive dependencies)
+- More accurate representation of what users with conservative package managers will get
+- Automatically handles Julia version selection as part of resolution
+
+**Recommendation**: Use `deps` mode for most packages as it focuses on testing your actual compat bounds without being affected by issues in transitive dependencies that you can't control.
 
 ## Supported compat entries
 

@@ -10,10 +10,16 @@ inputs:
   projects:
     description: 'Comma-separated list of Julia projects to modify.'
     default: '.'
+  use_resolver:
+    description: 'Use Resolver.jl for downgrade resolution instead of compat modification. Options: false, deps, alldeps, all'
+    default: 'false'
+  resolver_julia_version:
+    description: 'Julia version to use with resolver (default: 1.11)'
+    default: '1.11'
 runs:
   using: "composite"
   steps:
-    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.strict }}" "${{ inputs.projects }}"
+    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.strict }}" "${{ inputs.projects }}" "${{ inputs.use_resolver }}" "${{ inputs.resolver_julia_version }}"
       shell: bash
 branding:
   icon: trending-down
