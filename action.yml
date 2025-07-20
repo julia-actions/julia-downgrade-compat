@@ -11,8 +11,8 @@ inputs:
     description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), all (all packages)'
     default: 'deps'
   julia_version:
-    description: 'Julia version to use with resolver (default: 1.11)'
-    default: '1.11'
+    description: 'Julia version to use with resolver (default: 1.10)'
+    default: '1.10'
 runs:
   using: "composite"
   steps:

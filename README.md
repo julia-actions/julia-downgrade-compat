@@ -49,7 +49,7 @@ minimal versions and fail if your compat bounds are too low.
     mode: ''
 
     # Julia version to use with resolver (requires Julia 1.9+)
-    # Default: '1.11'
+    # Default: '1.10'
     julia_version: ''
 ```
 
@@ -63,11 +63,12 @@ jobs:
     strategy:
       matrix:
         downgrade_mode: ['deps', 'alldeps']
+        julia-version: ['1.10', '1']
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v1
         with:
-          version: '1.11'
+          version: ${{ matrix.julia-version }}
       - uses: julia-actions/julia-downgrade-compat@v1
         with:
           mode: ${{ matrix.downgrade_mode }}

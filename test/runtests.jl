@@ -15,14 +15,14 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
                 
                 [compat]
-                julia = "1.9"
+                julia = "1.10"
                 JSON = "0.21"
                 """
                 write("Project.toml", toml_content)
                 
                 # Test that the script runs without error
                 try
-                    run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.11"`)
+                    run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
                     @test true  # If we get here, it didn't error
                     @test isfile("Manifest.toml")  # Should create a manifest
                 catch e
@@ -34,6 +34,6 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
     
     @testset "argument validation" begin
         # Test invalid mode
-        @test_throws ErrorException run(`$(Base.julia_cmd()) -e "include(\"$downgrade_jl\")" "" "." "invalid_mode" "1.11"`)
+        @test_throws ErrorException run(`$(Base.julia_cmd()) -e "include(\"$downgrade_jl\")" "" "." "invalid_mode" "1.10"`)
     end
 end
