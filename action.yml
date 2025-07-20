@@ -1,25 +1,22 @@
 name: 'Downgrade Julia compat entries'
-description: 'Restricts the compat entries in Project.toml so that only the oldest versions are installed.'
+description: 'Uses Resolver.jl to find and install minimal compatible versions of dependencies.'
 inputs:
   skip:
     description: 'Comma-separated list of packages to not downgrade.'
     default: ''
-  strict:
-    description: 'true, false or v0. Default: v0.'
-    default: 'v0'
   projects:
-    description: 'Comma-separated list of Julia projects to modify.'
+    description: 'Comma-separated list of Julia projects to resolve.'
     default: '.'
-  use_resolver:
-    description: 'Use Resolver.jl for downgrade resolution instead of compat modification. Options: false, deps, alldeps, all'
-    default: 'false'
-  resolver_julia_version:
+  mode:
+    description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), all (all packages)'
+    default: 'deps'
+  julia_version:
     description: 'Julia version to use with resolver (default: 1.11)'
     default: '1.11'
 runs:
   using: "composite"
   steps:
-    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.strict }}" "${{ inputs.projects }}" "${{ inputs.use_resolver }}" "${{ inputs.resolver_julia_version }}"
+    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}"
       shell: bash
 branding:
   icon: trending-down
