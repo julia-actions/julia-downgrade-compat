@@ -31,7 +31,7 @@ minimal versions and fail if your compat bounds are too low.
 ## Usage
 
 ```yaml
-- uses: julia-actions/julia-downgrade-compat@v1
+- uses: julia-actions/julia-downgrade-compat@v2
   with:
     # Comma-separated list of packages to not downgrade. This should include any
     # standard libraries because these have versions tied to the Julia version.
@@ -69,7 +69,7 @@ jobs:
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.julia-version }}
-      - uses: julia-actions/julia-downgrade-compat@v1
+      - uses: julia-actions/julia-downgrade-compat@v2
         with:
           mode: ${{ matrix.downgrade_mode }}
           skip: Pkg, TOML
