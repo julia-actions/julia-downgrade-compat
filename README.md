@@ -45,7 +45,7 @@ minimal versions and fail if your compat bounds are too low.
     projects: ''
 
     # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps), 'all' (all packages)
-    # Default: 'deps'
+    # Default: 'alldeps'
     mode: ''
 
     # Julia version to use with resolver (requires Julia 1.9+)
