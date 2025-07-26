@@ -1,113 +1,71 @@
 using Test
+using TOML
+using Pkg
 
 downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
-specs = [
-    (
-        strict = "v0",
-        ignore = "Pkg0, Pkg00",
-        compats = [
-            ("julia", "1.6", "1.6"),
-            ("Pkg0", "1.2", "1.2"),
-            ("Pkg00", "1.3", "1.3"),
-            ("Pkg1", "1", "~1.0.0"),
-            ("Pkg2", "1.2", "~1.2.0"),
-            ("Pkg3", "1.2.3", "~1.2.3"),
-            ("Pkg4", "0", "=0.0.0"),
-            ("Pkg5", "0.2", "=0.2.0"),
-            ("Pkg6", "0.2.3", "=0.2.3"),
-            ("Pkg7", "0.0.3", "=0.0.3"),
-            ("Pkg8", "0.0.0", "=0.0.0"),
-            ("Pkg9", "^1.2.3", "~1.2.3"),
-            ("Pkg10", "~1.2.3", "~1.2.3"),
-            ("Pkg11", "=1.2.3", "=1.2.3"),
-            ("Pkg12", "^1, ~2, =3", "~1.0.0"),
-            ("Pkg13_jll", "1.2.3", "~1.2.3"),
-        ]
-    )
-    (
-        strict = "true",
-        ignore = "Pkg0, Pkg00",
-        compats = [
-            ("julia", "1.6", "1.6"),
-            ("Pkg0", "1.2", "1.2"),
-            ("Pkg00", "1.3", "1.3"),
-            ("Pkg1", "1", "=1.0.0"),
-            ("Pkg2", "1.2", "=1.2.0"),
-            ("Pkg3", "1.2.3", "=1.2.3"),
-            ("Pkg4", "0", "=0.0.0"),
-            ("Pkg5", "0.2", "=0.2.0"),
-            ("Pkg6", "0.2.3", "=0.2.3"),
-            ("Pkg7", "0.0.3", "=0.0.3"),
-            ("Pkg8", "0.0.0", "=0.0.0"),
-            ("Pkg9", "^1.2.3", "=1.2.3"),
-            ("Pkg10", "~1.2.3", "=1.2.3"),
-            ("Pkg11", "=1.2.3", "=1.2.3"),
-            ("Pkg12", "^1, ~2, =3", "=1.0.0"),
-            ("Pkg13_jll", "1.2.3", "=1.2.3"),
-        ]
-    )
-    (
-        strict = "false",
-        ignore = "Pkg0, Pkg00",
-        compats = [
-            ("julia", "1.6", "1.6"),
-            ("Pkg0", "1.2", "1.2"),
-            ("Pkg00", "1.3", "1.3"),
-            ("Pkg1", "1", "~1.0.0"),
-            ("Pkg2", "1.2", "~1.2.0"),
-            ("Pkg3", "1.2.3", "~1.2.3"),
-            ("Pkg4", "0", "~0.0.0"),
-            ("Pkg5", "0.2", "~0.2.0"),
-            ("Pkg6", "0.2.3", "~0.2.3"),
-            ("Pkg7", "0.0.3", "~0.0.3"),
-            ("Pkg8", "0.0.0", "~0.0.0"),
-            ("Pkg9", "^1.2.3", "~1.2.3"),
-            ("Pkg10", "~1.2.3", "~1.2.3"),
-            ("Pkg11", "=1.2.3", "=1.2.3"),
-            ("Pkg12", "^1, ~2, =3", "~1.0.0"),
-            ("Pkg13_jll", "1.2.3", "~1.2.3"),
-        ]
-    )
-]
+@testset "julia-downgrade-compat resolver tests" begin
+    @testset "simple resolver test" begin
+        mktempdir() do dir
+            cd(dir) do
+                # Create a Project.toml with known packages that have multiple versions
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
 
-function make_toml(compats)
-    io = IOBuffer()
-    println(io, "name = \"MyProject\"")
-    println(io)
-    println(io, "[compat]")
-    for (pkg, compat) in compats
-        println(io, pkg, " = \"", compat, "\"")
-    end
-    println(io)
-    println(io, "# some comment")
-    String(take!(io))
-end
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 
-function test_downgrade(; strict, ignore, compats, file)
-    @info "testing $strict $ignore $file"
-    mktempdir() do dir
-        cd(dir) do 
-            toml1a = make_toml([(pkg, compat) for (pkg, compat, _) in compats])
-            toml2a = make_toml([(pkg, compat) for (pkg, _, compat) in compats])
-            toml1b = toml1a * "# foo\n"
-            toml2b = toml2a * "# foo\n"
-            mkdir("foo")
-            write(file, toml1a)
-            write(joinpath("foo", file), toml1b)
-            run(`$(Base.julia_cmd()) $downgrade_jl $ignore $strict "., foo"`)
-            toml3a = read(file, String)
-            toml3b = read(joinpath("foo", file), String)
-            @test toml3a != toml1a
-            @test toml3a == toml2a
-            @test toml3b != toml1b
-            @test toml3b == toml2b
+                [compat]
+                julia = "1.10"
+                JSON = "0.20, 0.21"
+                DataStructures = "0.17, 0.18"
+                """
+                write("Project.toml", toml_content)
+
+                # Run the downgrade script
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
+
+                # Verify Manifest.toml was created
+                @test isfile("Manifest.toml")
+
+                # Parse the manifest to check versions
+                manifest = TOML.parsefile("Manifest.toml")
+
+                # Find JSON and DataStructures entries
+                deps = manifest["deps"]
+                deps_JSON = get(deps, "JSON", [])
+                deps_DataStructures = get(deps, "DataStructures", [])
+
+                @test !isempty(deps_JSON)
+                @test !isempty(deps_DataStructures)
+
+                # Verify we got minimal versions (0.20.x for JSON, 0.17.x for DataStructures)
+                @test startswith(deps_JSON[1]["version"], "0.20")
+                @test startswith(deps_DataStructures[1]["version"], "0.17")
+            end
         end
     end
-end
 
-@testset "julia-downgrade-compat" begin
-    @testset "basic $(spec.strict) $(spec.ignore) $file" for spec in specs, file in ["Project.toml", "JuliaProject.toml"]
-        test_downgrade(; spec..., file=file)
+    @testset "invalid cases" begin
+        # Test invalid mode
+        mktempdir() do dir
+            cd(dir) do
+                write("Project.toml", "name = \"Test\"")
+                @test_throws ProcessFailedException run(
+                    `$(Base.julia_cmd()) $downgrade_jl "" "." "invalid_mode" "1.10"`,
+                )
+            end
+        end
+
+        # Test missing Project.toml
+        mktempdir() do dir
+            cd(dir) do
+                @test_throws ProcessFailedException run(
+                    `$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`,
+                )
+            end
+        end
     end
 end
