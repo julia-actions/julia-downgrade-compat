@@ -9,7 +9,7 @@ inputs:
     default: '.'
   mode:
     description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), all (all packages)'
-    default: 'deps'
+    default: 'alldeps'
   julia_version:
     description: 'Julia version to use with resolver (default: 1.10)'
     default: '1.10'
