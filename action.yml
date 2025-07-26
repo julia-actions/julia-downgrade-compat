@@ -16,7 +16,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - run: julia "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}"
+    - run: julia --color=yes "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}"
       shell: bash
 branding:
   icon: trending-down
