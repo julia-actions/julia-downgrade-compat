@@ -62,7 +62,7 @@ jobs:
   test:
     strategy:
       matrix:
-        downgrade_mode: ['deps', 'alldeps']
+        downgrade_mode: ['alldeps']
         julia-version: ['1.10', '1']
     steps:
       - uses: actions/checkout@v4
