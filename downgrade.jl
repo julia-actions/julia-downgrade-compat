@@ -12,9 +12,10 @@ resolver_path = "/tmp/resolver"
 if !isdir(resolver_path)
     @info "Cloning Resolver.jl"
     run(`git clone https://github.com/StefanKarpinski/Resolver.jl.git $resolver_path`)
-    # Install dependencies
-    run(`julia --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
 end
+
+# Install dependencies
+run(`julia --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
 
 # Process each directory
 for dir in dirs
