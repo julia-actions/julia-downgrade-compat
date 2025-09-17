@@ -75,6 +75,8 @@ jobs:
           skip: Pkg, TOML
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+        with:
+          ALLOW_RERESOLVE: false
 ```
 
 The action requires Julia to be installed, so must occur after `setup-julia`. It runs just
