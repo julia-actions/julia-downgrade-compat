@@ -76,7 +76,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
-          force_latest_compatible_version: true
+          force_latest_compatible_version: false
 ```
 
 The action requires Julia to be installed, so must occur after `setup-julia`. It runs just
