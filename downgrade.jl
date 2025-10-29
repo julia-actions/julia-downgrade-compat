@@ -3,7 +3,7 @@ dirs = filter(!isempty, map(strip, split(ARGS[2], ",")))
 mode = length(ARGS) >= 3 ? ARGS[3] : "deps"
 julia_version = length(ARGS) >= 4 ? ARGS[4] : "1.10"
 
-mode in ["deps", "alldeps", "all"] || error("mode must be deps, alldeps, or all")
+mode in ["deps", "alldeps", "weakdeps"] || error("mode must be deps, alldeps, or weakdeps")
 
 @info "Using Resolver.jl with mode: $mode"
 
