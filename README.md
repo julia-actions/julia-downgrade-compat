@@ -44,7 +44,7 @@ minimal versions and fail if your compat bounds are too low.
     # Default: .
     projects: ''
 
-    # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps), 'all' (all packages)
+    # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps), 'weakdeps' (only weakdeps)
     # Default: 'alldeps'
     mode: ''
 
