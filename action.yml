@@ -8,7 +8,7 @@ inputs:
     description: 'Comma-separated list of Julia projects to resolve.'
     default: '.'
   mode:
-    description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), all (all packages)'
+    description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), weakdeps (only weakdeps)'
     default: 'alldeps'
   julia_version:
     description: 'Julia version to use with resolver (default: 1.10)'
