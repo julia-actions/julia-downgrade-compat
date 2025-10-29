@@ -88,7 +88,7 @@ The `skip:` input says that we should not attempt to downgrade `Pkg` or `TOML`.
 
 - **`deps`**: Minimize only your direct dependencies (recommended for most packages)
 - **`alldeps`**: Minimize direct dependencies and weak dependencies 
-- **`all`**: Minimize all packages (may test issues in transitive dependencies)
+- **`weakdeps`**: Minimize only weak dependencies
 
 **Recommendation**: Use `deps` mode for most packages as it focuses on testing your actual compat bounds without being affected by issues in transitive dependencies that you can't control.
 
