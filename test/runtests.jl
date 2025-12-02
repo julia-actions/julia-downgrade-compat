@@ -36,7 +36,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 # Find JSON and DataStructures entries
                 deps = manifest["deps"]
                 deps_JSON = get(deps, "JSON", [])
-#                 deps_DataStructures = get(deps, "DataStructures", [])
+                deps_DataStructures = get(deps, "DataStructures", [])
 
                 @test !isempty(deps_JSON)
                 @test !isempty(deps_DataStructures)
