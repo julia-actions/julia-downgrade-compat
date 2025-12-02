@@ -25,7 +25,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 write("Project.toml", toml_content)
 
                 # Run the downgrade script
-                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
+                run(`$(Base.julia_cmd()) $downgrade_jl "." "deps" "1.10"`)
 
                 # Verify Manifest.toml was created
                 @test isfile("Manifest.toml")
@@ -36,7 +36,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 # Find JSON and DataStructures entries
                 deps = manifest["deps"]
                 deps_JSON = get(deps, "JSON", [])
-                deps_DataStructures = get(deps, "DataStructures", [])
+#                 deps_DataStructures = get(deps, "DataStructures", [])
 
                 @test !isempty(deps_JSON)
                 @test !isempty(deps_DataStructures)
@@ -54,7 +54,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
             cd(dir) do
                 write("Project.toml", "name = \"Test\"")
                 @test_throws ProcessFailedException run(
-                    `$(Base.julia_cmd()) $downgrade_jl "" "." "invalid_mode" "1.10"`,
+                    `$(Base.julia_cmd()) $downgrade_jl "." "invalid_mode" "1.10"`,
                 )
             end
         end
@@ -63,7 +63,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
         mktempdir() do dir
             cd(dir) do
                 @test_throws ProcessFailedException run(
-                    `$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`,
+                    `$(Base.julia_cmd()) $downgrade_jl "." "deps" "1.10"`,
                 )
             end
         end
