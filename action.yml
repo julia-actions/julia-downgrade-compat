@@ -1,9 +1,6 @@
 name: 'Downgrade Julia compat entries'
 description: 'Uses Resolver.jl to find and install minimal compatible versions of dependencies.'
 inputs:
-  skip:
-    description: 'Comma-separated list of packages to not downgrade.'
-    default: ''
   projects:
     description: 'Comma-separated list of Julia projects to resolve.'
     default: '.'
@@ -16,7 +13,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - run: julia --color=yes "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}"
+    - run: julia --color=yes "${{ github.action_path }}/downgrade.jl" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}"
       shell: bash
 branding:
   icon: trending-down

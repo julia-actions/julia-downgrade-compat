@@ -33,12 +33,6 @@ minimal versions and fail if your compat bounds are too low.
 ```yaml
 - uses: julia-actions/julia-downgrade-compat@v2
   with:
-    # Comma-separated list of packages to not downgrade. This should include any
-    # standard libraries because these have versions tied to the Julia version.
-    # Example: Pkg, TOML
-    # Default: ''
-    skip: ''
-
     # Comma-separated list of Julia projects to resolve.
     # Example: ., test, docs
     # Default: .
@@ -72,7 +66,6 @@ jobs:
       - uses: julia-actions/julia-downgrade-compat@v2
         with:
           mode: ${{ matrix.downgrade_mode }}
-          skip: Pkg, TOML
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 ```
@@ -80,14 +73,12 @@ jobs:
 The action requires Julia to be installed, so must occur after `setup-julia`. It runs just
 before `julia-buildpkg` so that Resolver.jl creates a Manifest.toml with minimal versions before installing packages.
 
-In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios. 
-
-The `skip:` input says that we should not attempt to downgrade `Pkg` or `TOML`.
+In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios.
 
 ## Downgrade Modes
 
 - **`deps`**: Minimize only your direct dependencies (recommended for most packages)
-- **`alldeps`**: Minimize direct dependencies and weak dependencies 
+- **`alldeps`**: Minimize direct dependencies and weak dependencies
 - **`all`**: Minimize all packages (may test issues in transitive dependencies)
 
 **Recommendation**: Use `deps` mode for most packages as it focuses on testing your actual compat bounds without being affected by issues in transitive dependencies that you can't control.
