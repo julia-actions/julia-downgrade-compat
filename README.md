@@ -76,6 +76,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
+          allow_reresolve: false
           force_latest_compatible_version: false
 ```
 
