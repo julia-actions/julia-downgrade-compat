@@ -84,6 +84,35 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
         end
     end
 
+    @testset "forcedeps mode - fails when lower bounds are incompatible" begin
+        mktempdir() do dir
+            cd(dir) do
+                # JuMP 1.0.0 requires MathOptInterface >= 1.1.1, so even though we
+                # specify MathOptInterface = "1.0", the resolver will pick 1.1.1.
+                # The forcedeps check should then fail because 1.1.1 != 1.0.0
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
+
+                [deps]
+                JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+                MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
+
+                [compat]
+                julia = "1.10"
+                JuMP = "1.0"
+                MathOptInterface = "1.0"
+                """
+                write("Project.toml", toml_content)
+
+                # Run the downgrade script with forcedeps mode - should fail
+                @test_throws ProcessFailedException run(
+                    `$(Base.julia_cmd()) $downgrade_jl "" "." "forcedeps" "1.10"`,
+                )
+            end
+        end
+    end
+
     @testset "invalid cases" begin
         # Test invalid mode
         mktempdir() do dir
