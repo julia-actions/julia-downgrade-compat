@@ -35,6 +35,7 @@ minimal versions and fail if your compat bounds are too low.
   with:
     # Comma-separated list of packages to not downgrade. This should include any
     # standard libraries because these have versions tied to the Julia version.
+    # This option is only used with `mode: 'forcedeps'`.
     # Example: Pkg, TOML
     # Default: ''
     skip: ''
@@ -42,16 +43,16 @@ minimal versions and fail if your compat bounds are too low.
     # Comma-separated list of Julia projects to resolve.
     # Example: ., test, docs
     # Default: .
-    projects: ''
+    projects: '.'
 
     # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps),
     # 'weakdeps' (only weakdeps), 'forcedeps' (deps with strict lower bound verification)
     # Default: 'alldeps'
-    mode: ''
+    mode: 'alldeps'
 
     # Julia version to use with resolver (requires Julia 1.9+)
     # Default: '1.10'
-    julia_version: ''
+    julia_version: '1.10'
 ```
 
 ## Example
@@ -63,7 +64,7 @@ jobs:
   test:
     strategy:
       matrix:
-        downgrade_mode: ['alldeps']
+        downgrade_mode: ['deps', 'alldeps']
         julia-version: ['1.10', '1']
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +74,6 @@ jobs:
       - uses: julia-actions/julia-downgrade-compat@v2
         with:
           mode: ${{ matrix.downgrade_mode }}
-          skip: Pkg, TOML
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
@@ -85,8 +85,6 @@ The action requires Julia to be installed, so must occur after `setup-julia`. It
 before `julia-buildpkg` so that Resolver.jl creates a Manifest.toml with minimal versions before installing packages.
 
 In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios.
-
-The `skip:` input says that we should not attempt to downgrade `Pkg` or `TOML`.
 
 ## Downgrade Modes
 
@@ -111,6 +109,8 @@ Bar = "1"
 With `deps` mode, if Foo v1.0.0 is incompatible with Bar v1.0.0, the resolver will find an alternative solution like Foo v1.0.0 + Bar v1.1.0. Your tests will pass, but you won't know that your stated lower bounds are incompatible.
 
 With `forcedeps` mode, the action will error because Bar resolved to v1.1.0 instead of v1.0.0. This tells you that you need to update your compat to `Bar = "1.1"` to accurately reflect the minimum compatible version.
+
+Note that, when you use `forcedeps`, you usually need to `skip` the stdlibs.
 
 ## How it works
 
