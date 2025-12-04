@@ -44,7 +44,8 @@ minimal versions and fail if your compat bounds are too low.
     # Default: .
     projects: ''
 
-    # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps), 'weakdeps' (only weakdeps)
+    # Downgrade mode: 'deps' (direct dependencies), 'alldeps' (deps + weakdeps),
+    # 'weakdeps' (only weakdeps), 'forcedeps' (deps with strict lower bound verification)
     # Default: 'alldeps'
     mode: ''
 
@@ -90,10 +91,26 @@ The `skip:` input says that we should not attempt to downgrade `Pkg` or `TOML`.
 ## Downgrade Modes
 
 - **`deps`**: Minimize only your direct dependencies (recommended for most packages)
-- **`alldeps`**: Minimize direct dependencies and weak dependencies 
+- **`alldeps`**: Minimize direct dependencies and weak dependencies
 - **`weakdeps`**: Minimize only weak dependencies
+- **`forcedeps`**: Like `deps`, but also verifies that the resolved versions exactly match the lower bounds from your compat entries. If any package resolves to a higher version (because the lower bounds are mutually incompatible), the action will fail with an error indicating which compat bounds need to be increased.
 
 **Recommendation**: Use `deps` mode for most packages as it focuses on testing your actual compat bounds without being affected by issues in transitive dependencies that you can't control.
+
+### When to use `forcedeps`
+
+The `forcedeps` mode is useful when you want strict verification that your compat lower bounds are mutually compatible. This provides behavior similar to v1 of this action.
+
+For example, suppose you have:
+```toml
+[compat]
+Foo = "1"
+Bar = "1"
+```
+
+With `deps` mode, if Foo v1.0.0 is incompatible with Bar v1.0.0, the resolver will find an alternative solution like Foo v1.0.0 + Bar v1.1.0. Your tests will pass, but you won't know that your stated lower bounds are incompatible.
+
+With `forcedeps` mode, the action will error because Bar resolved to v1.1.0 instead of v1.0.0. This tells you that you need to update your compat to `Bar = "1.1"` to accurately reflect the minimum compatible version.
 
 ## How it works
 
