@@ -1,7 +1,10 @@
-# julia-downgrade-compat
+# julia-downgrade-compat@v1
 
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![Tests](https://github.com/julia-actions/julia-downgrade-compat/actions/workflows/tests.yml/badge.svg)](https://github.com/julia-actions/julia-downgrade-compat/actions/workflows/tests.yml)
+
+> [!NOTE]
+> This action has two supported versions: v1 and v2. You are currently viewing the README for v1. You can also view the [README for v2](https://github.com/julia-actions/julia-downgrade-compat/blob/main/README.md).
 
 **Easy-peasy checking of compat lower bounds in your Julia package.**
 
