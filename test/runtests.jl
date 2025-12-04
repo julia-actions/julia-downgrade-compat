@@ -48,6 +48,42 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
         end
     end
 
+    @testset "forcedeps mode - passes when lower bounds match" begin
+        mktempdir() do dir
+            cd(dir) do
+                # Create a Project.toml with known packages that should resolve to their lower bounds
+                # JSON 0.21.0 is a specific version that exists and should be resolvable
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
+
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+                [compat]
+                julia = "1.10"
+                JSON = "0.21"
+                """
+                write("Project.toml", toml_content)
+
+                # Run the downgrade script with forcedeps mode
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "forcedeps" "1.10"`)
+
+                # Verify Manifest.toml was created
+                @test isfile("Manifest.toml")
+
+                # Parse the manifest to verify the version
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+                deps_JSON = get(deps, "JSON", [])
+
+                @test !isempty(deps_JSON)
+                # Should be exactly 0.21.0 (the lower bound)
+                @test deps_JSON[1]["version"] == "0.21.0"
+            end
+        end
+    end
+
     @testset "invalid cases" begin
         # Test invalid mode
         mktempdir() do dir
