@@ -7,14 +7,12 @@ mode in ["deps", "alldeps", "weakdeps"] || error("mode must be deps, alldeps, or
 
 @info "Using Resolver.jl with mode: $mode"
 
-# Clone the resolver if not already present
-resolver_path = "/tmp/resolver"
-if !isdir(resolver_path)
-    @info "Cloning Resolver.jl"
-    run(`git clone https://github.com/StefanKarpinski/Resolver.jl.git $resolver_path`)
-    # Install dependencies
-    run(`julia --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
-end
+# Clone the resolver
+resolver_path = mktempdir()
+@info "Cloning Resolver.jl"
+run(`git clone https://github.com/StefanKarpinski/Resolver.jl.git $resolver_path`)
+# Install dependencies
+run(`julia --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
 
 # Process each directory
 for dir in dirs
