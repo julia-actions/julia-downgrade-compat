@@ -112,7 +112,8 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
             end
         end
     end
-@testset "forcedeps mode - skip" begin
+
+    @testset "forcedeps mode - skip" begin
         mktempdir() do dir
             cd(dir) do
                 # Create a Project.toml with known packages that should resolve to their lower bounds
@@ -150,6 +151,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
             end
         end
     end
+
     @testset "invalid cases" begin
         # Test invalid mode
         mktempdir() do dir
