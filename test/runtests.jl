@@ -172,4 +172,132 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
             end
         end
     end
+
+    @testset "test/Project.toml with local sources" begin
+        mktempdir() do dir
+            cd(dir) do
+                # Create main Project.toml
+                main_toml = """
+                name = "TestPackage"
+                uuid = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                version = "0.1.0"
+
+                [workspace]
+                projects = ["test"]
+                """
+                write("Project.toml", main_toml)
+
+                # Create src directory and module
+                mkdir("src")
+                write("src/TestPackage.jl", "module TestPackage\nend\n")
+
+                # Create test/Project.toml with local source reference
+                mkdir("test")
+                test_toml = """
+                [deps]
+                TestPackage = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+                [sources.TestPackage]
+                path = ".."
+                """
+                write("test/Project.toml", test_toml)
+                write("test/runtests.jl", "using TestPackage, Test\n@testset \"tests\" begin @test true end\n")
+
+                # Run the downgrade script with merged resolution
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "deps" "1.10"`)
+
+                # Verify Manifest.toml was created
+                @test isfile("Manifest.toml")
+
+                # Parse the manifest
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+
+                # Verify TestPackage is in the manifest as a path dependency
+                deps_TestPackage = get(deps, "TestPackage", [])
+                @test !isempty(deps_TestPackage)
+                @test deps_TestPackage[1]["path"] == "."
+                @test deps_TestPackage[1]["uuid"] == "598b003f-0677-49cf-8d2a-39b1658b755a"
+
+                # Verify Test stdlib is in the manifest
+                deps_Test = get(deps, "Test", [])
+                @test !isempty(deps_Test)
+
+                # Verify the test/Project.toml was restored (still has sources section)
+                test_project = TOML.parsefile("test/Project.toml")
+                @test haskey(test_project, "sources")
+                @test haskey(test_project["sources"], "TestPackage")
+            end
+        end
+    end
+
+    @testset "merged resolution with test dependencies" begin
+        mktempdir() do dir
+            cd(dir) do
+                # Create main Project.toml with JSON dependency
+                main_toml = """
+                name = "TestPackage"
+                uuid = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                version = "0.1.0"
+
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+                [compat]
+                julia = "1.10"
+                JSON = "0.20, 0.21"
+
+                [workspace]
+                projects = ["test"]
+                """
+                write("Project.toml", main_toml)
+
+                # Create src directory and module
+                mkdir("src")
+                write("src/TestPackage.jl", "module TestPackage\nend\n")
+
+                # Create test/Project.toml with additional test dependency and local source
+                mkdir("test")
+                test_toml = """
+                [deps]
+                TestPackage = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+                DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+
+                [compat]
+                DataStructures = "0.17, 0.18"
+
+                [sources.TestPackage]
+                path = ".."
+                """
+                write("test/Project.toml", test_toml)
+
+                # Run the downgrade script with merged resolution
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "deps" "1.10"`)
+
+                # Verify Manifest.toml was created
+                @test isfile("Manifest.toml")
+
+                # Parse the manifest
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+
+                # Verify main dependency JSON is minimized
+                deps_JSON = get(deps, "JSON", [])
+                @test !isempty(deps_JSON)
+                @test startswith(deps_JSON[1]["version"], "0.20")
+
+                # Verify test dependency DataStructures is minimized
+                deps_DataStructures = get(deps, "DataStructures", [])
+                @test !isempty(deps_DataStructures)
+                @test startswith(deps_DataStructures[1]["version"], "0.17")
+
+                # Verify TestPackage is in the manifest as a path dependency
+                deps_TestPackage = get(deps, "TestPackage", [])
+                @test !isempty(deps_TestPackage)
+                @test deps_TestPackage[1]["path"] == "."
+            end
+        end
+    end
 end
