@@ -8,6 +8,127 @@ julia_version = length(ARGS) >= 4 ? ARGS[4] : "1.10"
 valid_modes = ["deps", "alldeps", "weakdeps", "forcedeps"]
 mode in valid_modes || error("mode must be one of: $(join(valid_modes, ", "))")
 
+"""
+    get_local_source_packages(project_file)
+
+Parse a Project.toml and find packages that have local path sources.
+Returns a Set of package names that should be excluded from resolution
+because they are sourced from local paths (e.g., the main package in test/Project.toml).
+
+In Julia 1.13+, test dependencies often use [sources.PackageName] with path=".."
+to reference the main package. These cannot be resolved from the registry.
+"""
+function get_local_source_packages(project_file::String)
+    local_pkgs = Set{String}()
+
+    if !isfile(project_file)
+        return local_pkgs
+    end
+
+    project = TOML.parsefile(project_file)
+
+    # Check for [sources] section entries with path keys
+    sources = get(project, "sources", Dict())
+    for (pkg_name, source_info) in sources
+        if source_info isa Dict && haskey(source_info, "path")
+            push!(local_pkgs, pkg_name)
+            @info "Found local source package: $pkg_name (path=$(source_info["path"]))"
+        end
+    end
+
+    return local_pkgs
+end
+
+"""
+    remove_local_packages_from_project(project_file, local_pkgs)
+
+Create a modified version of the Project.toml with local source packages
+removed from [deps], [compat], [extras], and [sources] sections.
+Returns the original content so it can be restored later.
+
+Note: We must also remove from [sources] because Pkg validates that any
+package in [sources] must be in [deps] or [extras].
+"""
+function remove_local_packages_from_project(project_file::String, local_pkgs::Set{String})
+    if isempty(local_pkgs)
+        return nothing  # No modification needed
+    end
+
+    original_content = read(project_file, String)
+    project = TOML.parsefile(project_file)
+    modified = false
+
+    # Remove from [deps]
+    if haskey(project, "deps")
+        for pkg in local_pkgs
+            if haskey(project["deps"], pkg)
+                delete!(project["deps"], pkg)
+                modified = true
+                @info "Temporarily removing $pkg from [deps] for resolution"
+            end
+        end
+    end
+
+    # Remove from [extras]
+    if haskey(project, "extras")
+        for pkg in local_pkgs
+            if haskey(project["extras"], pkg)
+                delete!(project["extras"], pkg)
+                modified = true
+                @info "Temporarily removing $pkg from [extras] for resolution"
+            end
+        end
+    end
+
+    # Remove from [compat]
+    if haskey(project, "compat")
+        for pkg in local_pkgs
+            if haskey(project["compat"], pkg)
+                delete!(project["compat"], pkg)
+                modified = true
+                @info "Temporarily removing $pkg from [compat] for resolution"
+            end
+        end
+    end
+
+    # Remove from [sources] - must do this because Pkg validates that
+    # packages in [sources] must be in [deps] or [extras]
+    if haskey(project, "sources")
+        for pkg in local_pkgs
+            if haskey(project["sources"], pkg)
+                delete!(project["sources"], pkg)
+                modified = true
+                @info "Temporarily removing $pkg from [sources] for resolution"
+            end
+        end
+        # Remove empty [sources] section
+        if isempty(project["sources"])
+            delete!(project, "sources")
+        end
+    end
+
+    if modified
+        open(project_file, "w") do io
+            TOML.print(io, project)
+        end
+        return original_content
+    end
+
+    return nothing
+end
+
+"""
+    restore_project_file(project_file, original_content)
+
+Restore the original Project.toml content after resolution.
+"""
+function restore_project_file(project_file::String, original_content::Union{String,Nothing})
+    if original_content !== nothing
+        write(project_file, original_content)
+        @info "Restored original Project.toml"
+    end
+end
+
 @info "Using Resolver.jl with mode: $mode"
 
 # Clone the resolver
@@ -173,14 +294,27 @@ for dir in dirs
     project_file = first(project_files)
     manifest_file = joinpath(dir, "Manifest.toml")
 
-    @info "Running resolver on $dir with --min=@$resolver_mode"
-    run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
-    @info "Successfully resolved minimal versions for $dir"
+    # Handle packages with local [sources] entries (e.g., test/Project.toml referencing main package)
+    # These packages cannot be resolved from the registry, so we temporarily remove them
+    local_pkgs = get_local_source_packages(project_file)
+    original_content = remove_local_packages_from_project(project_file, local_pkgs)
+
+    try
+        @info "Running resolver on $dir with --min=@$resolver_mode"
+        run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
+        @info "Successfully resolved minimal versions for $dir"
+    finally
+        # Always restore the original Project.toml, even if resolution fails
+        restore_project_file(project_file, original_content)
+    end
 
     # For forcedeps mode, verify that the resolved versions match the lower bounds
+    # Note: we check against the original project file (now restored), but skip local source packages
     if mode == "forcedeps"
         @info "Checking that resolved versions match forced lower bounds..."
-        if !check_forced_lower_bounds(project_file, manifest_file, ignore_pkgs)
+        # Add local source packages to the ignore list for forcedeps check
+        forcedeps_ignore = union(ignore_pkgs, local_pkgs)
+        if !check_forced_lower_bounds(project_file, manifest_file, forcedeps_ignore)
             error("""
                 forcedeps check failed: Some packages did not resolve to their lower bounds.
 
