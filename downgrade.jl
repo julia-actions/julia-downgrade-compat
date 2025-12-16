@@ -226,6 +226,59 @@ function should_merge_projects(dirs)
     return (false, nothing, nothing)
 end
 
+"""
+    add_main_package_to_manifest(manifest_file, main_project_file)
+
+Add the main package itself to the manifest as a path dependency.
+This is needed because the main package is excluded from resolution
+(it's a local source), but the manifest needs to include it for
+workspace projects to work correctly.
+"""
+function add_main_package_to_manifest(manifest_file::String, main_project_file::String)
+    if !isfile(manifest_file)
+        @warn "Manifest file not found: $manifest_file"
+        return
+    end
+
+    main_project = TOML.parsefile(main_project_file)
+
+    # Get main package info
+    pkg_name = get(main_project, "name", nothing)
+    pkg_uuid = get(main_project, "uuid", nothing)
+    pkg_version = get(main_project, "version", nothing)
+
+    if pkg_name === nothing || pkg_uuid === nothing
+        @warn "Main project missing name or uuid, cannot add to manifest"
+        return
+    end
+
+    # Read the manifest content as text to preserve formatting
+    manifest_content = read(manifest_file, String)
+
+    # Build the entry for the main package
+    entry_lines = String[]
+    push!(entry_lines, "[[deps.$pkg_name]]")
+    push!(entry_lines, "path = \".\"")
+    push!(entry_lines, "uuid = \"$pkg_uuid\"")
+    if pkg_version !== nothing
+        push!(entry_lines, "version = \"$pkg_version\"")
+    end
+    push!(entry_lines, "")
+
+    main_pkg_entry = join(entry_lines, "\n")
+
+    # Append the main package entry to the manifest
+    open(manifest_file, "w") do io
+        print(io, manifest_content)
+        if !endswith(manifest_content, "\n")
+            println(io)
+        end
+        print(io, main_pkg_entry)
+    end
+
+    @info "Added main package $pkg_name to manifest"
+end
+
 @info "Using Resolver.jl with mode: $mode"
 
 # Clone the resolver
@@ -416,6 +469,10 @@ if do_merge
     if isfile(merged_manifest)
         cp(merged_manifest, main_manifest; force=true)
         @info "Copied merged manifest to $main_manifest"
+
+        # Add the main package itself to the manifest as a path dependency
+        # This is needed for workspace projects where the test project depends on the main package
+        add_main_package_to_manifest(main_manifest, main_project_file)
     end
 
     # For forcedeps mode, verify lower bounds for both projects
