@@ -43,7 +43,7 @@ function get_local_source_packages(project_file::String)
 end
 
 """
-    remove_local_packages_from_project(project_file, local_pkgs)
+    remove_source_packages_from_project(project_file, source_pkgs)
 
 Create a modified version of the Project.toml with local source packages
 removed from [deps], [compat], [extras], and [sources] sections.
