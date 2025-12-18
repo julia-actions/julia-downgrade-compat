@@ -9,51 +9,57 @@ valid_modes = ["deps", "alldeps", "weakdeps", "forcedeps"]
 mode in valid_modes || error("mode must be one of: $(join(valid_modes, ", "))")
 
 """
-    get_local_source_packages(project_file)
+    get_source_packages(project_file)
 
-Parse a Project.toml and find packages that have local path sources.
+Parse a Project.toml and find packages that have custom sources (path or url).
 Returns a Set of package names that should be excluded from resolution
-because they are sourced from local paths (e.g., the main package in test/Project.toml).
+because they are sourced from local paths or URLs (e.g., the main package in test/Project.toml).
 
 In Julia 1.13+, test dependencies often use [sources.PackageName] with path=".."
 to reference the main package. These cannot be resolved from the registry.
+Packages can also be sourced from URLs, which similarly should be excluded from resolution.
 """
-function get_local_source_packages(project_file::String)
-    local_pkgs = Set{String}()
+function get_source_packages(project_file::String)
+    source_pkgs = Set{String}()
 
     if !isfile(project_file)
-        return local_pkgs
+        return source_pkgs
     end
 
     project = TOML.parsefile(project_file)
 
-    # Check for [sources] section entries with path keys
+    # Check for [sources] section entries with path or url keys
     if !haskey(project, "sources")
-        return local_pkgs
+        return source_pkgs
     end
     sources = project["sources"]
     for (pkg_name, source_info) in sources
-        if source_info isa Dict && haskey(source_info, "path")
-            push!(local_pkgs, pkg_name)
-            @info "Found local source package: $pkg_name (path=$(source_info["path"]))"
+        if source_info isa Dict
+            if haskey(source_info, "path")
+                push!(source_pkgs, pkg_name)
+                @info "Found source package: $pkg_name (path=$(source_info["path"]))"
+            elseif haskey(source_info, "url")
+                push!(source_pkgs, pkg_name)
+                @info "Found source package: $pkg_name (url=$(source_info["url"]))"
+            end
         end
     end
 
-    return local_pkgs
+    return source_pkgs
 end
 
 """
     remove_source_packages_from_project(project_file, source_pkgs)
 
-Create a modified version of the Project.toml with local source packages
+Create a modified version of the Project.toml with source packages
 removed from [deps], [compat], [extras], and [sources] sections.
 Returns the original content so it can be restored later.
 
 Note: We must also remove from [sources] because Pkg validates that any
 package in [sources] must be in [deps] or [extras].
 """
-function remove_local_packages_from_project(project_file::String, local_pkgs::Set{String})
-    if isempty(local_pkgs)
+function remove_source_packages_from_project(project_file::String, source_pkgs::Set{String})
+    if isempty(source_pkgs)
         return nothing  # No modification needed
     end
 
@@ -61,53 +67,21 @@ function remove_local_packages_from_project(project_file::String, local_pkgs::Se
     project = TOML.parsefile(project_file)
     modified = false
 
-    # Remove from [deps]
-    if haskey(project, "deps")
-        for pkg in local_pkgs
-            if haskey(project["deps"], pkg)
-                delete!(project["deps"], pkg)
-                modified = true
-                @info "Temporarily removing $pkg from [deps] for resolution"
-            end
+    # Remove from [deps], [extras], [compat], and [sources]
+    for section_name in ("deps", "extras", "compat", "sources")
+        haskey(project, section_name) || continue
+        section = project[section_name]
+        for pkg in source_pkgs
+            haskey(section, pkg) || continue
+            delete!(section, pkg)
+            modified = true
+            @info "Temporarily removing $pkg from [$section_name] for resolution"
         end
     end
 
-    # Remove from [extras]
-    if haskey(project, "extras")
-        for pkg in local_pkgs
-            if haskey(project["extras"], pkg)
-                delete!(project["extras"], pkg)
-                modified = true
-                @info "Temporarily removing $pkg from [extras] for resolution"
-            end
-        end
-    end
-
-    # Remove from [compat]
-    if haskey(project, "compat")
-        for pkg in local_pkgs
-            if haskey(project["compat"], pkg)
-                delete!(project["compat"], pkg)
-                modified = true
-                @info "Temporarily removing $pkg from [compat] for resolution"
-            end
-        end
-    end
-
-    # Remove from [sources] - must do this because Pkg validates that
-    # packages in [sources] must be in [deps] or [extras]
-    if haskey(project, "sources")
-        for pkg in local_pkgs
-            if haskey(project["sources"], pkg)
-                delete!(project["sources"], pkg)
-                modified = true
-                @info "Temporarily removing $pkg from [sources] for resolution"
-            end
-        end
-        # Remove empty [sources] section
-        if isempty(project["sources"])
-            delete!(project, "sources")
-        end
+    # Remove empty [sources] section
+    if haskey(project, "sources") && isempty(project["sources"])
+        delete!(project, "sources")
     end
 
     if modified
@@ -125,7 +99,8 @@ end
 
 Restore the original Project.toml content after resolution.
 """
-function restore_project_file(project_file::String, original_content::Union{String,Nothing})
+function restore_project_file(project_file::String, original_content::Union{
+        String, Nothing})
     if original_content !== nothing
         write(project_file, original_content)
         @info "Restored original Project.toml"
@@ -139,14 +114,14 @@ Create a merged Project.toml that combines dependencies from both the main
 project and test project. This ensures that when tests run (which combine
 both environments), the resolved versions are compatible.
 
-Returns a Set of local source packages that were excluded from the merge.
+Returns a Set of source packages that were excluded from the merge.
 """
 function create_merged_project(main_project_file::String, test_project_file::String, merged_dir::String)
     main_project = TOML.parsefile(main_project_file)
     test_project = TOML.parsefile(test_project_file)
 
-    # Get local source packages from test project (e.g., the main package itself)
-    local_pkgs = get_local_source_packages(test_project_file)
+    # Get source packages from test project (e.g., the main package itself)
+    source_pkgs = get_source_packages(test_project_file)
 
     # Start with a copy of the main project
     merged = deepcopy(main_project)
@@ -154,13 +129,13 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     # Remove workspace section (not needed for resolution)
     delete!(merged, "workspace")
 
-    # Merge deps from test project (excluding local source packages)
+    # Merge deps from test project (excluding source packages)
     test_deps = get(test_project, "deps", Dict())
     if !haskey(merged, "deps")
-        merged["deps"] = Dict{String,Any}()
+        merged["deps"] = Dict{String, Any}()
     end
     for (pkg, uuid) in test_deps
-        if pkg ∉ local_pkgs && !haskey(merged["deps"], pkg)
+        if pkg ∉ source_pkgs && !haskey(merged["deps"], pkg)
             merged["deps"][pkg] = uuid
             @info "Adding test dependency to merged project: $pkg"
         end
@@ -169,10 +144,10 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     # Merge compat entries from test project
     test_compat = get(test_project, "compat", Dict())
     if !haskey(merged, "compat")
-        merged["compat"] = Dict{String,Any}()
+        merged["compat"] = Dict{String, Any}()
     end
     for (pkg, compat) in test_compat
-        if pkg ∉ local_pkgs
+        if pkg ∉ source_pkgs
             if haskey(merged["compat"], pkg)
                 # Both have compat - keep both constraints (Resolver.jl will find intersection)
                 # For simplicity, we keep the main project's compat if they differ
@@ -188,10 +163,10 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     test_weakdeps = get(test_project, "weakdeps", Dict())
     if !isempty(test_weakdeps)
         if !haskey(merged, "weakdeps")
-            merged["weakdeps"] = Dict{String,Any}()
+            merged["weakdeps"] = Dict{String, Any}()
         end
         for (pkg, uuid) in test_weakdeps
-            if pkg ∉ local_pkgs && !haskey(merged["weakdeps"], pkg)
+            if pkg ∉ source_pkgs && !haskey(merged["weakdeps"], pkg)
                 merged["weakdeps"][pkg] = uuid
                 @info "Adding test weakdep to merged project: $pkg"
             end
@@ -206,7 +181,7 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     end
 
     @info "Created merged project at $merged_file"
-    return local_pkgs
+    return source_pkgs
 end
 
 """
@@ -282,6 +257,85 @@ function add_main_package_to_manifest(manifest_file::String, main_project_file::
     @info "Added main package $pkg_name to manifest"
 end
 
+"""
+    resolve_directory(dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
+
+Resolve dependencies for a single directory. Handles source packages by temporarily
+removing them from the project file, running the resolver, and then restoring the original.
+Returns the source packages found in the directory (for use in forcedeps checking).
+"""
+function resolve_directory(
+        dir::AbstractString, resolver_path::AbstractString, resolver_mode::AbstractString,
+        julia_version::AbstractString, mode::AbstractString, ignore_pkgs)
+    project_files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
+    filter!(isfile, project_files)
+    isempty(project_files) &&
+        error("could not find Project.toml or JuliaProject.toml in $dir")
+
+    project_file = first(project_files)
+    manifest_file = joinpath(dir, "Manifest.toml")
+
+    # Handle packages with [sources] entries (e.g., test/Project.toml referencing main package)
+    # These packages cannot be resolved from the registry, so we temporarily remove them
+    source_pkgs = get_source_packages(project_file)
+    original_content = remove_source_packages_from_project(project_file, source_pkgs)
+
+    try
+        @info "Running resolver on $dir with --min=@$resolver_mode"
+        run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
+        @info "Successfully resolved minimal versions for $dir"
+    finally
+        # Always restore the original Project.toml, even if resolution fails
+        restore_project_file(project_file, original_content)
+    end
+
+    # For forcedeps mode, verify that the resolved versions match the lower bounds
+    # Note: we check against the original project file (now restored), but skip source packages
+    if mode == "forcedeps"
+        @info "Checking that resolved versions match forced lower bounds for $dir..."
+        forcedeps_ignore = union(ignore_pkgs, source_pkgs)
+        if !check_forced_lower_bounds(project_file, manifest_file, forcedeps_ignore)
+            error("""
+                forcedeps check failed for $dir: Some packages did not resolve to their lower bounds.
+
+                This means the lowest compatible versions of your direct dependencies are
+                incompatible with each other. To fix this, you need to increase the lower
+                bounds in your compat entries to versions that are mutually compatible.
+
+                See the errors above for which packages need their bounds adjusted.
+                """)
+        end
+        @info "All forcedeps checks passed for $dir"
+    end
+
+    return source_pkgs
+end
+
+"""
+    check_for_workspace(project_file)
+
+Check if a project file defines workspaces and print a warning if so.
+Workspaces with nested environments are not fully supported.
+"""
+function check_for_workspace(project_file::String)
+    if !isfile(project_file)
+        return
+    end
+
+    project = TOML.parsefile(project_file)
+
+    if haskey(project, "workspace")
+        workspace = project["workspace"]
+        projects = get(workspace, "projects", [])
+        if length(projects) > 1 || (length(projects) == 1 && projects[1] != "test")
+            @warn """Workspace with multiple or non-standard projects detected.
+            This action currently only supports merging main (.) and test environments.
+            Nested workspaces or additional workspace projects (e.g., docs, integration tests)
+            are not fully supported and may not be resolved correctly."""
+        end
+    end
+end
+
 @info "Using Resolver.jl with mode: $mode"
 
 # Clone the resolver
@@ -304,7 +358,7 @@ Uses the same logic as v1 of the action:
 - Skips julia and ignored packages
 """
 function get_lower_bounds(project_file::String, ignore_pkgs)
-    bounds = Dict{String,VersionNumber}()
+    bounds = Dict{String, VersionNumber}()
     lines = readlines(project_file)
     in_compat = false
 
@@ -367,7 +421,7 @@ Parse a Manifest.toml and extract the resolved versions for each package.
 Returns a Dict mapping package names to their resolved VersionNumber.
 """
 function get_resolved_versions(manifest_file::String)
-    versions = Dict{String,VersionNumber}()
+    versions = Dict{String, VersionNumber}()
 
     if !isfile(manifest_file)
         return versions
@@ -438,6 +492,12 @@ end
 # For forcedeps, we use "deps" mode and then verify the results
 resolver_mode = mode == "forcedeps" ? "deps" : mode
 
+# Check for workspaces in main project and warn if detected
+main_project_candidates = ["./Project.toml", "./JuliaProject.toml"]
+for candidate in main_project_candidates
+    check_for_workspace(candidate)
+end
+
 # Check if we should merge main and test projects
 (do_merge, main_dir, test_dir) = should_merge_projects(dirs)
 
@@ -446,9 +506,11 @@ if do_merge
     @info "Merging main (.) and test projects for combined resolution"
 
     main_project_file = isfile(joinpath(main_dir, "Project.toml")) ?
-        joinpath(main_dir, "Project.toml") : joinpath(main_dir, "JuliaProject.toml")
+                        joinpath(main_dir, "Project.toml") :
+                        joinpath(main_dir, "JuliaProject.toml")
     test_project_file = isfile(joinpath(test_dir, "Project.toml")) ?
-        joinpath(test_dir, "Project.toml") : joinpath(test_dir, "JuliaProject.toml")
+                        joinpath(test_dir, "Project.toml") :
+                        joinpath(test_dir, "JuliaProject.toml")
 
     if !isfile(main_project_file)
         error("could not find Project.toml or JuliaProject.toml in $main_dir")
@@ -459,7 +521,7 @@ if do_merge
 
     # Create merged project in temp directory
     merged_dir = mktempdir()
-    local_pkgs = create_merged_project(main_project_file, test_project_file, merged_dir)
+    source_pkgs = create_merged_project(main_project_file, test_project_file, merged_dir)
 
     # Run resolver on merged project
     @info "Running resolver on merged project with --min=@$resolver_mode"
@@ -470,7 +532,7 @@ if do_merge
     merged_manifest = joinpath(merged_dir, "Manifest.toml")
     main_manifest = joinpath(main_dir, "Manifest.toml")
     if isfile(merged_manifest)
-        cp(merged_manifest, main_manifest; force=true)
+        cp(merged_manifest, main_manifest; force = true)
         @info "Copied merged manifest to $main_manifest"
 
         # Add the main package itself to the manifest as a path dependency
@@ -481,7 +543,7 @@ if do_merge
     # For forcedeps mode, verify lower bounds for both projects
     if mode == "forcedeps"
         @info "Checking that resolved versions match forced lower bounds..."
-        forcedeps_ignore = union(ignore_pkgs, local_pkgs)
+        forcedeps_ignore = union(ignore_pkgs, source_pkgs)
 
         # Check main project
         if !check_forced_lower_bounds(main_project_file, main_manifest, forcedeps_ignore)
@@ -496,7 +558,7 @@ if do_merge
                 """)
         end
 
-        # Check test project (excluding local source packages)
+        # Check test project (excluding source packages)
         if !check_forced_lower_bounds(test_project_file, main_manifest, forcedeps_ignore)
             error("""
                 forcedeps check failed: Some test dependencies did not resolve to their lower bounds.
@@ -511,78 +573,13 @@ if do_merge
     # Process any remaining directories that aren't main or test
     other_dirs = filter(d -> d != "." && d != "test", dirs)
     for dir in other_dirs
-        project_files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
-        filter!(isfile, project_files)
-        isempty(project_files) && error("could not find Project.toml or JuliaProject.toml in $dir")
-
-        project_file = first(project_files)
-        manifest_file = joinpath(dir, "Manifest.toml")
-
-        dir_local_pkgs = get_local_source_packages(project_file)
-        original_content = remove_local_packages_from_project(project_file, dir_local_pkgs)
-
-        try
-            @info "Running resolver on $dir with --min=@$resolver_mode"
-            run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
-            @info "Successfully resolved minimal versions for $dir"
-        finally
-            restore_project_file(project_file, original_content)
-        end
-
-        if mode == "forcedeps"
-            @info "Checking that resolved versions match forced lower bounds for $dir..."
-            local forcedeps_ignore = union(ignore_pkgs, dir_local_pkgs)
-            if !check_forced_lower_bounds(project_file, manifest_file, forcedeps_ignore)
-                error("""
-                    forcedeps check failed for $dir: Some packages did not resolve to their lower bounds.
-                    See the errors above for which packages need their bounds adjusted.
-                    """)
-            end
-            @info "All forcedeps checks passed for $dir"
-        end
+        resolve_directory(
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
     end
 else
     # Independent resolution: process each directory separately
     for dir in dirs
-        project_files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
-        filter!(isfile, project_files)
-        isempty(project_files) && error("could not find Project.toml or JuliaProject.toml in $dir")
-
-        project_file = first(project_files)
-        manifest_file = joinpath(dir, "Manifest.toml")
-
-        # Handle packages with local [sources] entries (e.g., test/Project.toml referencing main package)
-        # These packages cannot be resolved from the registry, so we temporarily remove them
-        local local_pkgs = get_local_source_packages(project_file)
-        original_content = remove_local_packages_from_project(project_file, local_pkgs)
-
-        try
-            @info "Running resolver on $dir with --min=@$resolver_mode"
-            run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
-            @info "Successfully resolved minimal versions for $dir"
-        finally
-            # Always restore the original Project.toml, even if resolution fails
-            restore_project_file(project_file, original_content)
-        end
-
-        # For forcedeps mode, verify that the resolved versions match the lower bounds
-        # Note: we check against the original project file (now restored), but skip local source packages
-        if mode == "forcedeps"
-            @info "Checking that resolved versions match forced lower bounds..."
-            # Add local source packages to the ignore list for forcedeps check
-            local forcedeps_ignore = union(ignore_pkgs, local_pkgs)
-            if !check_forced_lower_bounds(project_file, manifest_file, forcedeps_ignore)
-                error("""
-                    forcedeps check failed: Some packages did not resolve to their lower bounds.
-
-                    This means the lowest compatible versions of your direct dependencies are
-                    incompatible with each other. To fix this, you need to increase the lower
-                    bounds in your compat entries to versions that are mutually compatible.
-
-                    See the errors above for which packages need their bounds adjusted.
-                    """)
-            end
-            @info "All forcedeps checks passed for $dir"
-        end
+        resolve_directory(
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
     end
 end
