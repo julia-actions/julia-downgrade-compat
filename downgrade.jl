@@ -28,7 +28,10 @@ function get_local_source_packages(project_file::String)
     project = TOML.parsefile(project_file)
 
     # Check for [sources] section entries with path keys
-    sources = get(project, "sources", Dict())
+    if !haskey(project, "sources")
+        return local_pkgs
+    end
+    sources = project["sources"]
     for (pkg_name, source_info) in sources
         if source_info isa Dict && haskey(source_info, "path")
             push!(local_pkgs, pkg_name)
