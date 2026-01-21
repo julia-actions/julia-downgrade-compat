@@ -5,6 +5,13 @@ dirs = filter(!isempty, map(strip, split(ARGS[2], ",")))
 mode = length(ARGS) >= 3 ? ARGS[3] : "deps"
 julia_version = length(ARGS) >= 4 ? ARGS[4] : "1.10"
 
+# Convert "1" to the current running Julia version (e.g., "1.12" for Julia 1.12.3)
+# This ensures the resolved manifest matches the Julia version that will read it
+if julia_version == "1"
+    julia_version = string(VERSION.major, ".", VERSION.minor)
+    @info "Converted julia_version \"1\" to \"$julia_version\" (current Julia version)"
+end
+
 valid_modes = ["deps", "alldeps", "weakdeps", "forcedeps"]
 mode in valid_modes || error("mode must be one of: $(join(valid_modes, ", "))")
 
@@ -282,7 +289,7 @@ function resolve_directory(
 
     try
         @info "Running resolver on $dir with --min=@$resolver_mode"
-        run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
+        run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
         @info "Successfully resolved minimal versions for $dir"
     finally
         # Always restore the original Project.toml, even if resolution fails
@@ -343,7 +350,7 @@ resolver_path = mktempdir()
 @info "Cloning Resolver.jl"
 run(`git clone https://github.com/StefanKarpinski/Resolver.jl.git $resolver_path`)
 # Install dependencies
-run(`julia --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
+run(`$(Base.julia_cmd()) --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
 
 """
     get_lower_bounds(project_file, ignore_pkgs)
@@ -525,7 +532,7 @@ if do_merge
 
     # Run resolver on merged project
     @info "Running resolver on merged project with --min=@$resolver_mode"
-    run(`julia --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+    run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
     @info "Successfully resolved minimal versions for merged project"
 
     # Copy manifest to main project directory
