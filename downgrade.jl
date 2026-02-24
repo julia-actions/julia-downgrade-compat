@@ -16,6 +16,33 @@ valid_modes = ["deps", "alldeps", "weakdeps", "forcedeps"]
 mode in valid_modes || error("mode must be one of: $(join(valid_modes, ", "))")
 
 """
+    get_resolver_julia_cmd(julia_version)
+
+Return the Julia command used to run Resolver.jl.
+
+If `julia_version` differs from the currently running Julia minor version,
+this tries to use `julia +<julia_version>` (juliaup channel syntax) so that
+Resolver and Pkg run with a matching Julia runtime. If unavailable, it falls
+back to the current Julia executable.
+"""
+function get_resolver_julia_cmd(julia_version::AbstractString)
+    current_minor = string(VERSION.major, ".", VERSION.minor)
+    if julia_version == current_minor
+        return Base.julia_cmd()
+    end
+
+    candidate_cmd = `julia +$julia_version`
+    try
+        run(pipeline(`$candidate_cmd --version`; stdout = devnull, stderr = devnull))
+        @info "Using Julia runtime matching julia_version: $candidate_cmd"
+        return candidate_cmd
+    catch
+        @warn "Could not find Julia runtime for julia_version=$julia_version via `julia +$julia_version`; falling back to current Julia ($(VERSION))"
+        return Base.julia_cmd()
+    end
+end
+
+"""
     get_source_packages(project_file)
 
 Parse a Project.toml and find packages that have custom sources (path or url).
@@ -286,8 +313,9 @@ removing them from the project file, running the resolver, and then restoring th
 Returns the source packages found in the directory (for use in forcedeps checking).
 """
 function resolve_directory(
-        dir::AbstractString, resolver_path::AbstractString, resolver_mode::AbstractString,
-        julia_version::AbstractString, mode::AbstractString, ignore_pkgs)
+    dir::AbstractString, resolver_path::AbstractString, resolver_mode::AbstractString,
+    julia_version::AbstractString, mode::AbstractString, ignore_pkgs,
+    resolver_julia_cmd::Cmd)
     project_files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
     filter!(isfile, project_files)
     isempty(project_files) &&
@@ -303,7 +331,7 @@ function resolve_directory(
 
     try
         @info "Running resolver on $dir with --min=@$resolver_mode"
-        run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
+        run(`$resolver_julia_cmd --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
         @info "Successfully resolved minimal versions for $dir"
     finally
         # Always restore the original Project.toml, even if resolution fails
@@ -359,12 +387,15 @@ end
 
 @info "Using Resolver.jl with mode: $mode"
 
+# Pick the Julia executable used for running Resolver.jl
+resolver_julia_cmd = get_resolver_julia_cmd(julia_version)
+
 # Clone the resolver
 resolver_path = mktempdir()
 @info "Cloning Resolver.jl"
 run(`git clone https://github.com/StefanKarpinski/Resolver.jl.git $resolver_path`)
 # Install dependencies
-run(`$(Base.julia_cmd()) --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
+run(`$resolver_julia_cmd --project=$resolver_path/bin -e "using Pkg; Pkg.instantiate()"`)
 
 """
     get_lower_bounds(project_file, ignore_pkgs)
@@ -546,7 +577,7 @@ if do_merge
 
     # Run resolver on merged project
     @info "Running resolver on merged project with --min=@$resolver_mode"
-    run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+    run(`$resolver_julia_cmd --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
     @info "Successfully resolved minimal versions for merged project"
 
     # Copy manifest to main project directory
@@ -595,12 +626,14 @@ if do_merge
     other_dirs = filter(d -> d != "." && d != "test", dirs)
     for dir in other_dirs
         resolve_directory(
-            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs,
+            resolver_julia_cmd)
     end
 else
     # Independent resolution: process each directory separately
     for dir in dirs
         resolve_directory(
-            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs,
+            resolver_julia_cmd)
     end
 end
