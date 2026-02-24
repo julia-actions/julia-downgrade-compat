@@ -51,8 +51,8 @@ minimal versions and fail if your compat bounds are too low.
     mode: 'alldeps'
 
     # Julia version to use with resolver (requires Julia 1.9+)
-    # Default: '1.10'
-    julia_version: '1.10'
+    # Default: '1' (converted to current runtime Julia major.minor)
+    julia_version: '1'
 ```
 
 ## Example
@@ -85,6 +85,9 @@ The action requires Julia to be installed, so must occur after `setup-julia`. It
 before `julia-buildpkg` so that Resolver.jl creates a Manifest.toml with minimal versions before installing packages.
 
 In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios.
+
+When possible, run the action on the same Julia version that you pass as `julia_version`.
+Cross-runtime resolution may fail; matching runtime and target version is recommended.
 
 ## Downgrade Modes
 

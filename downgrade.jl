@@ -3,13 +3,18 @@ using TOML
 ignore_pkgs = filter(!isempty, map(strip, split(ARGS[1], ",")))
 dirs = filter(!isempty, map(strip, split(ARGS[2], ",")))
 mode = length(ARGS) >= 3 ? ARGS[3] : "deps"
-julia_version = length(ARGS) >= 4 ? ARGS[4] : "1.10"
+current_julia_minor = string(VERSION.major, ".", VERSION.minor)
+julia_version = length(ARGS) >= 4 ? ARGS[4] : current_julia_minor
 
 # Convert "1" to the current running Julia version (e.g., "1.12" for Julia 1.12.3)
 # This ensures the resolved manifest matches the Julia version that will read it
 if julia_version == "1"
-    julia_version = string(VERSION.major, ".", VERSION.minor)
+    julia_version = current_julia_minor
     @info "Converted julia_version \"1\" to \"$julia_version\" (current Julia version)"
+end
+
+if julia_version != current_julia_minor
+    @warn "Requested julia_version=$julia_version differs from current runtime Julia $current_julia_minor. Cross-runtime mode may fail."
 end
 
 valid_modes = ["deps", "alldeps", "weakdeps", "forcedeps"]

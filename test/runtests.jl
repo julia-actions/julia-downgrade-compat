@@ -107,7 +107,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
                 # Run the downgrade script with forcedeps mode - should fail
                 @test_throws ProcessFailedException run(
-                    `$(Base.julia_cmd()) $downgrade_jl "" "." "forcedeps" "1.10"`,
+                    `$(Base.julia_cmd()) $downgrade_jl "" "." "forcedeps"`,
                 )
             end
         end
@@ -345,7 +345,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 """
                 write("test/Project.toml", test_toml)
 
-                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "forcedeps" "1.10"`)
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "forcedeps"`)
 
                 manifest = TOML.parsefile("Manifest.toml")
                 deps = manifest["deps"]

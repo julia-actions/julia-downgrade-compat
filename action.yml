@@ -11,8 +11,8 @@ inputs:
     description: 'Downgrade mode: deps (direct dependencies), alldeps (deps + weakdeps), weakdeps (only weakdeps), forcedeps (deps with strict lower bound verification)'
     default: 'alldeps'
   julia_version:
-    description: 'Julia version to use with resolver (default: 1.10)'
-    default: '1.10'
+    description: 'Julia version to use with resolver (default: 1, i.e. current runtime Julia major.minor)'
+    default: '1'
 runs:
   using: "composite"
   steps:
