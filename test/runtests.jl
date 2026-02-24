@@ -345,7 +345,7 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 """
                 write("test/Project.toml", test_toml)
 
-                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "forcedeps" "1.12"`)
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "forcedeps" "1.10"`)
 
                 manifest = TOML.parsefile("Manifest.toml")
                 deps = manifest["deps"]
