@@ -87,7 +87,7 @@ before `julia-buildpkg` so that Resolver.jl creates a Manifest.toml with minimal
 In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios.
 
 When possible, run the action on the same Julia version that you pass as `julia_version`.
-Cross-runtime resolution may fail; matching runtime and target version is recommended.
+Cross-runtime resolution may fail; matching runtime and target version is recommended and the default for `julia_version`.
 
 ## Downgrade Modes
 
