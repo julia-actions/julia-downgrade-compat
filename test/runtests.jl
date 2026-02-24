@@ -300,4 +300,60 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
             end
         end
     end
+
+    @testset "merged resolution promotes weakdeps used by tests" begin
+        mktempdir() do dir
+            cd(dir) do
+                # Main project has JuMP as weakdep
+                main_toml = """
+                name = "TestPackage"
+                uuid = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                version = "0.1.0"
+
+                [deps]
+
+                [weakdeps]
+                JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+
+                [extensions]
+                JuMPExt = "JuMP"
+
+                [compat]
+                julia = "1.10"
+                JuMP = "1.28"
+
+                [workspace]
+                projects = ["test"]
+                """
+                write("Project.toml", main_toml)
+
+                mkdir("src")
+                write("src/TestPackage.jl", "module TestPackage\nend\n")
+
+                # Test project requires JuMP as a regular dependency
+                mkdir("test")
+                test_toml = """
+                [deps]
+                TestPackage = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+
+                [compat]
+                JuMP = "1.28"
+
+                [sources.TestPackage]
+                path = ".."
+                """
+                write("test/Project.toml", test_toml)
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "forcedeps" "1.12"`)
+
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+
+                deps_JuMP = get(deps, "JuMP", [])
+                @test !isempty(deps_JuMP)
+                @test startswith(deps_JuMP[1]["version"], "1.28")
+            end
+        end
+    end
 end

@@ -137,15 +137,29 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     delete!(merged, "workspace")
 
     # Merge deps from test project (excluding source packages)
+    # If a package is weak in main but strong in test, promote it to strong
+    # in the merged project by removing it from weakdeps.
     test_deps = get(test_project, "deps", Dict())
     if !haskey(merged, "deps")
         merged["deps"] = Dict{String, Any}()
     end
     for (pkg, uuid) in test_deps
-        if pkg ∉ source_pkgs && !haskey(merged["deps"], pkg)
-            merged["deps"][pkg] = uuid
-            @info "Adding test dependency to merged project: $pkg"
+        if pkg ∉ source_pkgs
+            if !haskey(merged["deps"], pkg)
+                merged["deps"][pkg] = uuid
+                @info "Adding test dependency to merged project: $pkg"
+            end
+
+            if haskey(merged, "weakdeps") && haskey(merged["weakdeps"], pkg)
+                delete!(merged["weakdeps"], pkg)
+                @info "Promoting $pkg from weakdep to dependency in merged project"
+            end
         end
+    end
+
+    # Remove empty [weakdeps] section after promotions
+    if haskey(merged, "weakdeps") && isempty(merged["weakdeps"])
+        delete!(merged, "weakdeps")
     end
 
     # Merge compat entries from test project
