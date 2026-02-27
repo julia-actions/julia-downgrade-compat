@@ -209,10 +209,13 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
                 # Verify Manifest.toml was created
                 @test isfile("Manifest.toml")
+                @test isfile(joinpath("test", "Manifest.toml"))
 
                 # Parse the manifest
                 manifest = TOML.parsefile("Manifest.toml")
                 deps = manifest["deps"]
+                test_manifest = TOML.parsefile(joinpath("test", "Manifest.toml"))
+                test_deps = test_manifest["deps"]
 
                 # Verify TestPackage is in the manifest as a path dependency
                 deps_TestPackage = get(deps, "TestPackage", [])
@@ -220,9 +223,24 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 @test deps_TestPackage[1]["path"] == "."
                 @test deps_TestPackage[1]["uuid"] == "598b003f-0677-49cf-8d2a-39b1658b755a"
 
+                # Verify TestPackage is present in test manifest with test-relative path
+                test_deps_TestPackage = get(test_deps, "TestPackage", [])
+                @test !isempty(test_deps_TestPackage)
+                @test test_deps_TestPackage[1]["path"] == ".."
+
                 # Verify Test stdlib is in the manifest
                 deps_Test = get(deps, "Test", [])
                 @test !isempty(deps_Test)
+
+                # Verify project hashes match what Pkg expects for each project
+                root_hash_expected = string(Pkg.Types.workspace_resolve_hash(
+                    Pkg.Types.EnvCache(joinpath(dir, "Project.toml")),
+                ))
+                test_hash_expected = string(Pkg.Types.workspace_resolve_hash(
+                    Pkg.Types.EnvCache(joinpath(dir, "test", "Project.toml")),
+                ))
+                @test manifest["project_hash"] == root_hash_expected
+                @test test_manifest["project_hash"] == test_hash_expected
 
                 # Verify the test/Project.toml was restored (still has sources section)
                 test_project = TOML.parsefile("test/Project.toml")

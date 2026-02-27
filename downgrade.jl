@@ -1,4 +1,5 @@
 using TOML
+using Pkg
 
 ignore_pkgs = filter(!isempty, map(strip, split(ARGS[1], ",")))
 dirs = filter(!isempty, map(strip, split(ARGS[2], ",")))
@@ -238,7 +239,7 @@ This is needed because the main package is excluded from resolution
 (it's a local source), but the manifest needs to include it for
 workspace projects to work correctly.
 """
-function add_main_package_to_manifest(manifest_file::String, main_project_file::String)
+function add_main_package_to_manifest(manifest_file::String, main_project_file::String; path::String = ".")
     if !isfile(manifest_file)
         @warn "Manifest file not found: $manifest_file"
         return
@@ -262,7 +263,7 @@ function add_main_package_to_manifest(manifest_file::String, main_project_file::
     # Build the entry for the main package
     entry_lines = String[]
     push!(entry_lines, "[[deps.$pkg_name]]")
-    push!(entry_lines, "path = \".\"")
+    push!(entry_lines, "path = \"$path\"")
     push!(entry_lines, "uuid = \"$pkg_uuid\"")
     if pkg_version !== nothing
         push!(entry_lines, "version = \"$pkg_version\"")
@@ -281,6 +282,34 @@ function add_main_package_to_manifest(manifest_file::String, main_project_file::
     end
 
     @info "Added main package $pkg_name to manifest"
+end
+
+"""
+    set_manifest_project_hash(manifest_file, project_file)
+
+Update `project_hash` in `manifest_file` so it matches what Pkg expects for
+`project_file`. This avoids spurious "project dependencies changed" warnings
+and test-time re-resolution in downstream actions.
+"""
+function set_manifest_project_hash(manifest_file::String, project_file::String)
+    if !isfile(manifest_file)
+        @warn "Manifest file not found: $manifest_file"
+        return
+    end
+    if !isfile(project_file)
+        @warn "Project file not found: $project_file"
+        return
+    end
+
+    manifest = TOML.parsefile(manifest_file)
+    env = Pkg.Types.EnvCache(project_file)
+    manifest["project_hash"] = string(Pkg.Types.workspace_resolve_hash(env))
+
+    open(manifest_file, "w") do io
+        TOML.print(io, manifest)
+    end
+
+    @info "Updated project_hash in $manifest_file to match $project_file"
 end
 
 """
@@ -557,13 +586,23 @@ if do_merge
     # Copy manifest to main project directory
     merged_manifest = joinpath(merged_dir, "Manifest.toml")
     main_manifest = joinpath(main_dir, "Manifest.toml")
+    test_manifest = joinpath(test_dir, "Manifest.toml")
     if isfile(merged_manifest)
         cp(merged_manifest, main_manifest; force = true)
         @info "Copied merged manifest to $main_manifest"
 
+        cp(merged_manifest, test_manifest; force = true)
+        @info "Copied merged manifest to $test_manifest"
+
         # Add the main package itself to the manifest as a path dependency
         # This is needed for workspace projects where the test project depends on the main package
-        add_main_package_to_manifest(main_manifest, main_project_file)
+        add_main_package_to_manifest(main_manifest, main_project_file; path = ".")
+        add_main_package_to_manifest(test_manifest, main_project_file; path = "..")
+
+        # Ensure each manifest has the project hash corresponding to the project
+        # that will consume it (main root and test environment respectively).
+        set_manifest_project_hash(main_manifest, main_project_file)
+        set_manifest_project_hash(test_manifest, test_project_file)
     end
 
     # For forcedeps mode, verify lower bounds for both projects
