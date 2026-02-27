@@ -4,6 +4,17 @@ using Pkg
 
 downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
+function expected_project_hash(project_file::String)
+    env = Pkg.Types.EnvCache(project_file)
+    if isdefined(Pkg.Types, :workspace_resolve_hash)
+        return string(Pkg.Types.workspace_resolve_hash(env))
+    elseif isdefined(Pkg.Types, :project_resolve_hash)
+        return string(Pkg.Types.project_resolve_hash(env.project))
+    else
+        error("Could not compute expected project hash for tests")
+    end
+end
+
 @testset "julia-downgrade-compat resolver tests" begin
     @testset "simple resolver test" begin
         mktempdir() do dir
@@ -233,12 +244,8 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 @test !isempty(deps_Test)
 
                 # Verify project hashes match what Pkg expects for each project
-                root_hash_expected = string(Pkg.Types.workspace_resolve_hash(
-                    Pkg.Types.EnvCache(joinpath(dir, "Project.toml")),
-                ))
-                test_hash_expected = string(Pkg.Types.workspace_resolve_hash(
-                    Pkg.Types.EnvCache(joinpath(dir, "test", "Project.toml")),
-                ))
+                root_hash_expected = expected_project_hash(joinpath(dir, "Project.toml"))
+                test_hash_expected = expected_project_hash(joinpath(dir, "test", "Project.toml"))
                 @test manifest["project_hash"] == root_hash_expected
                 @test test_manifest["project_hash"] == test_hash_expected
 

@@ -303,7 +303,16 @@ function set_manifest_project_hash(manifest_file::String, project_file::String)
 
     manifest = TOML.parsefile(manifest_file)
     env = Pkg.Types.EnvCache(project_file)
-    manifest["project_hash"] = string(Pkg.Types.workspace_resolve_hash(env))
+
+    resolve_hash = if isdefined(Pkg.Types, :workspace_resolve_hash)
+        Pkg.Types.workspace_resolve_hash(env)
+    elseif isdefined(Pkg.Types, :project_resolve_hash)
+        Pkg.Types.project_resolve_hash(env.project)
+    else
+        error("Could not compute project hash: no supported Pkg.Types hash API found")
+    end
+
+    manifest["project_hash"] = string(resolve_hash)
 
     open(manifest_file, "w") do io
         TOML.print(io, manifest)
