@@ -41,7 +41,7 @@ minimal versions and fail if your compat bounds are too low.
     skip: ''
 
     # Comma-separated list of Julia projects to resolve.
-    # Example: ., test, docs
+    # Example: ., test
     # Default: .
     projects: '.'
 
