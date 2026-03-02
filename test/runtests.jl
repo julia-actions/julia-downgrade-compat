@@ -4,6 +4,17 @@ using Pkg
 
 downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
+function expected_project_hash(project_file::String)
+    env = Pkg.Types.EnvCache(project_file)
+    if isdefined(Pkg.Types, :workspace_resolve_hash)
+        return string(Pkg.Types.workspace_resolve_hash(env))
+    elseif isdefined(Pkg.Types, :project_resolve_hash)
+        return string(Pkg.Types.project_resolve_hash(env.project))
+    else
+        error("Could not compute expected project hash for tests")
+    end
+end
+
 @testset "julia-downgrade-compat resolver tests" begin
     @testset "simple resolver test" begin
         mktempdir() do dir
@@ -241,10 +252,13 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
 
                 # Verify Manifest.toml was created
                 @test isfile("Manifest.toml")
+                @test isfile(joinpath("test", "Manifest.toml"))
 
                 # Parse the manifest
                 manifest = TOML.parsefile("Manifest.toml")
                 deps = manifest["deps"]
+                test_manifest = TOML.parsefile(joinpath("test", "Manifest.toml"))
+                test_deps = test_manifest["deps"]
 
                 # Verify TestPackage is in the manifest as a path dependency
                 deps_TestPackage = get(deps, "TestPackage", [])
@@ -252,9 +266,20 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
                 @test deps_TestPackage[1]["path"] == "."
                 @test deps_TestPackage[1]["uuid"] == "598b003f-0677-49cf-8d2a-39b1658b755a"
 
+                # Verify TestPackage is present in test manifest with test-relative path
+                test_deps_TestPackage = get(test_deps, "TestPackage", [])
+                @test !isempty(test_deps_TestPackage)
+                @test test_deps_TestPackage[1]["path"] == ".."
+
                 # Verify Test stdlib is in the manifest
                 deps_Test = get(deps, "Test", [])
                 @test !isempty(deps_Test)
+
+                # Verify project hashes match what Pkg expects for each project
+                root_hash_expected = expected_project_hash(joinpath(dir, "Project.toml"))
+                test_hash_expected = expected_project_hash(joinpath(dir, "test", "Project.toml"))
+                @test manifest["project_hash"] == root_hash_expected
+                @test test_manifest["project_hash"] == test_hash_expected
 
                 # Verify the test/Project.toml was restored (still has sources section)
                 test_project = TOML.parsefile("test/Project.toml")

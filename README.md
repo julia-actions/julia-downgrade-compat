@@ -41,7 +41,7 @@ minimal versions and fail if your compat bounds are too low.
     skip: ''
 
     # Comma-separated list of Julia projects to resolve.
-    # Example: ., test, docs
+    # Example: ., test
     # Default: .
     projects: '.'
 
@@ -85,6 +85,35 @@ The action requires Julia to be installed, so must occur after `setup-julia`. It
 before `julia-buildpkg` so that Resolver.jl creates a Manifest.toml with minimal versions before installing packages.
 
 In this example, we test both `deps` (direct dependencies only) and `alldeps` (deps + weakdeps) scenarios.
+
+### Julia versions before 1.12
+
+On Julia `< 1.12`, `Pkg.test` may still re-resolve package versions for split test environments
+(for example when using both `Project.toml` and `test/Project.toml`), even with
+`allow_reresolve: false` in `julia-actions/julia-runtest`.
+
+For strict lower-bound testing on Julia `< 1.12`, run tests manually from the locked test
+environment instead of using `julia-actions/julia-runtest`:
+
+```yaml
+- uses: julia-actions/julia-downgrade-compat@v2
+  with:
+    skip: LinearAlgebra,Printf,SparseArrays,DelimitedFiles,Test
+    projects: .,test
+    mode: forcedeps
+- name: Run tests
+  run: |
+    julia --project=test --color=yes -e '
+      import Pkg
+      Pkg.develop(Pkg.PackageSpec(path=pwd()))
+      Pkg.instantiate()
+      Pkg.status(; mode=Pkg.PKGMODE_MANIFEST)
+      include("test/runtests.jl")
+    '
+```
+
+For Julia `>= 1.12`, using `julia-actions/julia-runtest` with
+`allow_reresolve: false` and `force_latest_compatible_version: false` is recommended.
 
 When possible, run the action on the same Julia version that you pass as `julia_version`.
 Cross-runtime resolution may fail; matching runtime and target version is recommended and the default for `julia_version`.
