@@ -480,6 +480,19 @@ function get_resolved_versions(manifest_file::String)
 end
 
 """
+    versions_match_ignoring_build(actual, expected)
+
+Return true if two versions are equal, ignoring SemVer build metadata
+(the `+...` suffix). This allows `1.2.3` and `1.2.3+4` to match.
+"""
+function versions_match_ignoring_build(actual::VersionNumber, expected::VersionNumber)
+    return actual.major == expected.major &&
+           actual.minor == expected.minor &&
+           actual.patch == expected.patch &&
+           actual.prerelease == expected.prerelease
+end
+
+"""
     check_forced_lower_bounds(project_file, manifest_file, ignore_pkgs)
 
 Verify that the resolved versions in the manifest match the lower bounds
@@ -503,7 +516,7 @@ function check_forced_lower_bounds(project_file::String, manifest_file::String, 
         # Check if the major.minor.patch matches
         # We compare the full version, but note that the lower bound might be
         # less specific (e.g., "1.2" means v1.2.0)
-        if actual != expected
+        if !versions_match_ignoring_build(actual, expected)
             @error "forcedeps check failed: $pkg resolved to $actual but lower bound is $expected"
             all_match = false
         else

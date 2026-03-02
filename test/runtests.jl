@@ -152,6 +152,38 @@ downgrade_jl = joinpath(dirname(@__DIR__), "downgrade.jl")
         end
     end
 
+    @testset "forcedeps mode - ignores build metadata" begin
+        mktempdir() do dir
+            cd(dir) do
+                # JLL packages commonly resolve with build metadata (e.g., +0)
+                # while compat lower bounds typically omit it.
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
+
+                [deps]
+                OpenSSL_jll = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
+
+                [compat]
+                julia = "1.10"
+                OpenSSL_jll = "3.5.0"
+                """
+                write("Project.toml", toml_content)
+
+                # Should pass even when resolved version is like 3.5.0+0
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "forcedeps" "1.10"`)
+
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+                deps_OpenSSL_jll = get(deps, "OpenSSL_jll", [])
+
+                @test !isempty(deps_OpenSSL_jll)
+                @test startswith(deps_OpenSSL_jll[1]["version"], "3.5.0")
+                @test occursin("+", deps_OpenSSL_jll[1]["version"])
+            end
+        end
+    end
+
     @testset "invalid cases" begin
         # Test invalid mode
         mktempdir() do dir
