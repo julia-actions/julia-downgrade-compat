@@ -483,6 +483,84 @@ end
         end
     end
 
+    @testset "merged resolution for nested subpackage test environment" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkdir("libs")
+                mkdir("libs/SubdirPackage")
+
+                main_toml = """
+                name = "SubdirPackage"
+                uuid = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                version = "0.1.0"
+
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+                [compat]
+                julia = "1.10"
+                JSON = "0.20, 0.21"
+
+                [workspace]
+                projects = ["test"]
+                """
+                write("libs/SubdirPackage/Project.toml", main_toml)
+
+                mkdir("libs/SubdirPackage/src")
+                write("libs/SubdirPackage/src/SubdirPackage.jl", "module SubdirPackage\nend\n")
+
+                mkdir("libs/SubdirPackage/test")
+                test_toml = """
+                [deps]
+                SubdirPackage = "598b003f-0677-49cf-8d2a-39b1658b755a"
+                Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+                DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+
+                [compat]
+                DataStructures = "0.17, 0.18"
+
+                [sources.SubdirPackage]
+                path = ".."
+                """
+                write("libs/SubdirPackage/test/Project.toml", test_toml)
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "libs/SubdirPackage,libs/SubdirPackage/test" "deps" "1.10"`)
+
+                main_manifest_file = joinpath("libs", "SubdirPackage", "Manifest.toml")
+                test_manifest_file = joinpath("libs", "SubdirPackage", "test", "Manifest.toml")
+                @test isfile(main_manifest_file)
+                @test isfile(test_manifest_file)
+
+                main_manifest = TOML.parsefile(main_manifest_file)
+                test_manifest = TOML.parsefile(test_manifest_file)
+
+                main_deps = get(main_manifest, "deps", Dict())
+                test_deps = get(test_manifest, "deps", Dict())
+
+                deps_JSON = get(main_deps, "JSON", [])
+                @test !isempty(deps_JSON)
+                @test startswith(deps_JSON[1]["version"], "0.20")
+
+                deps_DataStructures = get(main_deps, "DataStructures", [])
+                @test !isempty(deps_DataStructures)
+                @test startswith(deps_DataStructures[1]["version"], "0.17")
+
+                deps_SubdirPackage = get(main_deps, "SubdirPackage", [])
+                @test !isempty(deps_SubdirPackage)
+                @test deps_SubdirPackage[1]["path"] == "."
+
+                test_deps_SubdirPackage = get(test_deps, "SubdirPackage", [])
+                @test !isempty(test_deps_SubdirPackage)
+                @test test_deps_SubdirPackage[1]["path"] == ".."
+
+                @test main_manifest["project_hash"] ==
+                      expected_project_hash(joinpath(dir, "libs", "SubdirPackage", "Project.toml"))
+                @test test_manifest["project_hash"] ==
+                      expected_project_hash(joinpath(dir, "libs", "SubdirPackage", "test", "Project.toml"))
+            end
+        end
+    end
+
     @testset "merged resolution promotes weakdeps used by tests" begin
         mktempdir() do dir
             cd(dir) do

@@ -239,13 +239,22 @@ Returns (should_merge, main_dir, test_dir) tuple.
 """
 function should_merge_projects(dirs)
     # Normalize directory names
-    normalized = [d == "." ? "." : rstrip(d, '/') for d in dirs]
+    normalized = unique(normpath.(dirs))
+    normalized_set = Set(normalized)
 
-    has_main = "." in normalized
-    has_test = "test" in normalized
-
-    if has_main && has_test
+    # Keep the existing root workspace behavior, but also support nested
+    # subpackages where the test environment lives in a sibling `test/` dir.
+    if "." in normalized_set && "test" in normalized_set
         return (true, ".", "test")
+    end
+
+    for test_dir in normalized
+        basename(test_dir) == "test" || continue
+
+        main_dir = dirname(test_dir)
+        main_dir in normalized_set || continue
+
+        return (true, main_dir, test_dir)
     end
 
     return (false, nothing, nothing)
@@ -679,7 +688,7 @@ end
 
 if do_merge
     # Merged resolution: combine main and test projects, resolve together
-    @info "Merging main (.) and test projects for combined resolution"
+    @info "Merging main and test projects for combined resolution" main_dir test_dir
 
     main_project_file = isfile(joinpath(main_dir, "Project.toml")) ?
                         joinpath(main_dir, "Project.toml") :
@@ -756,8 +765,10 @@ if do_merge
         @info "All forcedeps checks passed for merged project"
     end
 
-    # Process any remaining directories that aren't main or test
-    other_dirs = filter(d -> d != "." && d != "test", dirs)
+    # Process any remaining directories that weren't part of the merged pair.
+    # For nested subpackages, the merged main/test paths are not "."/"test", so
+    # compare normalized paths rather than filtering only the root names.
+    other_dirs = filter(d -> normpath(d) != main_dir && normpath(d) != test_dir, dirs)
     for dir in other_dirs
         resolve_directory(
             dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs)
