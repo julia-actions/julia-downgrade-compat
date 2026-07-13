@@ -972,6 +972,96 @@ end
         end
     end
 
+    @testset "split projects rebase direct path sources in both locked manifests" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkpath("LocalDep/src")
+                write(
+                    "LocalDep/Project.toml",
+                    """
+                    name = "LocalDep"
+                    uuid = "99999999-9999-9999-9999-999999999999"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+                    [compat]
+                    JSON = "0.21"
+                    """
+                )
+                write("LocalDep/src/LocalDep.jl", "module LocalDep\nusing JSON\nend\n")
+
+                mkpath("src")
+                mkpath("test")
+                write("src/RootPkg.jl", "module RootPkg\nusing LocalDep\nend\n")
+                write(
+                    "test/runtests.jl",
+                    "using Test, BenchmarkTools, RootPkg\n@test true\n"
+                )
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                    LocalDep = "99999999-9999-9999-9999-999999999999"
+
+                    [sources]
+                    LocalDep = {path = "LocalDep"}
+
+                    [compat]
+                    julia = "1.10"
+                    JSON = "0.21.4"
+                    LocalDep = "0.1"
+                    """
+                )
+                write(
+                    "test/Project.toml",
+                    """
+                    [deps]
+                    BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+                    RootPkg = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+                    [sources]
+                    RootPkg = {path = ".."}
+
+                    [compat]
+                    BenchmarkTools = "1.5.0"
+                    """
+                )
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "alldeps" "1"`)
+
+                main_manifest = TOML.parsefile("Manifest.toml")
+                test_manifest = TOML.parsefile("test/Manifest.toml")
+                main_deps = main_manifest["deps"]
+                test_deps = test_manifest["deps"]
+                @test only(main_deps["JSON"])["version"] == "0.21.4"
+                @test only(main_deps["BenchmarkTools"])["version"] == "1.5.0"
+                @test only(main_deps["LocalDep"])["path"] == "LocalDep"
+                @test Set(only(main_deps["LocalDep"])["deps"]) == Set(["JSON"])
+                @test only(test_deps["LocalDep"])["path"] == "../LocalDep"
+                @test only(main_deps["RootPkg"])["path"] == "."
+                @test only(test_deps["RootPkg"])["path"] == ".."
+                @test Set(only(test_deps["RootPkg"])["deps"]) == Set(["JSON", "LocalDep"])
+
+                locked = Dict(
+                    name => only(test_deps[name])["version"]
+                    for name in ("BenchmarkTools", "JSON")
+                )
+                run(`$(Base.julia_cmd()) --project=test -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'`)
+                after = TOML.parsefile("test/Manifest.toml")["deps"]
+                @test locked == Dict(
+                    name => only(after[name])["version"] for name in keys(locked)
+                )
+            end
+        end
+    end
+
     @testset "no_promote keeps a named weakdep extension out of the joint resolve" begin
         # The merged resolution promotes every weakdep test-extra into ONE joint
         # floor-resolve -- correct, because the extensions coexist in a single test

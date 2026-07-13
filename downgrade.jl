@@ -535,7 +535,7 @@ function set_manifest_project_hash(manifest_file::String, project_file::String)
 end
 
 """
-    add_source_packages_to_manifest(manifest_file, project_file, dir, source_pkgs)
+    add_source_packages_to_manifest(manifest_file, project_file, manifest_dir, source_pkgs)
 
 Re-add local path-sourced packages to `manifest_file` after resolution.
 
@@ -560,7 +560,7 @@ dependency on ... is ambiguous". The path source must win, since that is the
 whole point of the `[sources]` override.
 """
 function add_source_packages_to_manifest(
-        manifest_file::String, project_file::String, dir::AbstractString, source_pkgs)
+        manifest_file::String, project_file::String, manifest_dir::AbstractString, source_pkgs)
     isempty(source_pkgs) && return
     if !isfile(manifest_file)
         @warn "Manifest file not found: $manifest_file"
@@ -570,6 +570,8 @@ function add_source_packages_to_manifest(
     project = TOML.parsefile(project_file)
     sources = get(project, "sources", Dict())
     deps = get(project, "deps", Dict())
+    project_dir = dirname(abspath(project_file))
+    manifest_dir = abspath(manifest_dir)
 
     entry_lines = String[]
     added_pkgs = String[]
@@ -580,16 +582,20 @@ function add_source_packages_to_manifest(
         src = get(sources, pkg, nothing)
         (src isa Dict && haskey(src, "path")) || continue
 
-        pkg_path = src["path"]
-        candidates = [joinpath(dir, pkg_path, "Project.toml"),
-                      joinpath(dir, pkg_path, "JuliaProject.toml")]
+        source_path = normpath(joinpath(project_dir, src["path"]))
+        pkg_path = relpath(source_path, manifest_dir)
+        candidates = [joinpath(source_path, "Project.toml"),
+                      joinpath(source_path, "JuliaProject.toml")]
         filter!(isfile, candidates)
         uuid = get(deps, pkg, nothing)
         version = nothing
+        hard_deps = String[]
         if !isempty(candidates)
             pkg_project = TOML.parsefile(first(candidates))
             uuid = get(pkg_project, "uuid", uuid)
             version = get(pkg_project, "version", nothing)
+            append!(hard_deps, keys(get(pkg_project, "deps", Dict{String, Any}())))
+            sort!(hard_deps)
         end
         if uuid === nothing
             @warn "Could not determine uuid for source package $pkg, skipping manifest entry"
@@ -597,6 +603,7 @@ function add_source_packages_to_manifest(
         end
 
         push!(entry_lines, "[[deps.$pkg]]")
+        isempty(hard_deps) || push!(entry_lines, "deps = $(repr(hard_deps))")
         push!(entry_lines, "path = \"$pkg_path\"")
         push!(entry_lines, "uuid = \"$uuid\"")
         version !== nothing && push!(entry_lines, "version = \"$version\"")
@@ -966,6 +973,18 @@ if do_merge
         # This is needed for workspace projects where the test project depends on the main package
         add_main_package_to_manifest(main_manifest, main_project_file; path = ".")
         add_main_package_to_manifest(test_manifest, main_project_file; path = "..")
+        main_source_pkgs = get_source_packages(main_project_file)
+        test_source_pkgs = get_source_packages(test_project_file)
+        for (manifest, manifest_dir) in (
+                (main_manifest, main_dir), (test_manifest, test_dir)
+            )
+            add_source_packages_to_manifest(
+                manifest, main_project_file, manifest_dir, main_source_pkgs
+            )
+            add_source_packages_to_manifest(
+                manifest, test_project_file, manifest_dir, test_source_pkgs
+            )
+        end
 
         # Ensure each manifest has the project hash corresponding to the project
         # that will consume it (main root and test environment respectively).
