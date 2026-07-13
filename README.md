@@ -123,6 +123,20 @@ For Julia `>= 1.12`, using `julia-actions/julia-runtest` with
 When possible, run the action on the same Julia version that you pass as `julia_version`.
 Cross-runtime resolution may fail; matching runtime and target version is recommended and the default for `julia_version`.
 
+### Local path sources
+
+For a direct runtime dependency configured with `[sources]` and `path`, the
+action includes hard registry dependencies that are declared by the local
+package but missing from the active project in the minimum-version resolution.
+Dependencies already declared by the active project retain their compat floor;
+the subsequent locked build and test validate that floor against the local
+package. If two direct path packages add the same missing dependency, their UUID
+and compat strings must match or the action fails.
+
+This support is intentionally limited to direct path packages. It does not
+traverse nested path sources, promote their weak dependencies, or intersect
+different compat strings for an existing project dependency.
+
 ## Downgrade Modes
 
 - **`deps`**: Minimize only your direct dependencies (recommended for most packages)

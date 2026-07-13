@@ -139,83 +139,149 @@ function get_source_packages(project_file::String)
     return source_pkgs
 end
 
-"""
-    remove_source_packages_from_project(project_file, source_pkgs)
+struct DirectRuntimePathSource
+    name::String
+    project::Dict{String, Any}
+end
 
-Create a modified version of the Project.toml with source packages
-removed from [deps], [compat], [extras], [sources], and [targets] sections.
-Returns the original content so it can be restored later.
-
-Note: We must also remove from [sources] because Pkg validates that any
-package in [sources] must be in [deps] or [extras]; and from [targets]
-because Pkg validates that any package in a target must be in [deps],
-[weakdeps], or [extras]. A source package that also appears in a test
-target (common in monorepos that dev a sibling package for testing) would
-otherwise leave a dangling target reference once removed from [extras].
-"""
-function remove_source_packages_from_project(project_file::String, source_pkgs::Set{String})
-    if isempty(source_pkgs)
-        return nothing  # No modification needed
+function find_project_file(dir::AbstractString)
+    for filename in ("Project.toml", "JuliaProject.toml")
+        project_file = joinpath(dir, filename)
+        isfile(project_file) && return project_file
     end
-
-    original_content = read(project_file, String)
-    project = TOML.parsefile(project_file)
-    modified = false
-
-    # Remove from [deps], [extras], [compat], and [sources]
-    for section_name in ("deps", "extras", "compat", "sources")
-        haskey(project, section_name) || continue
-        section = project[section_name]
-        for pkg in source_pkgs
-            haskey(section, pkg) || continue
-            delete!(section, pkg)
-            modified = true
-            @info "Temporarily removing $pkg from [$section_name] for resolution"
-        end
-    end
-
-    # Remove from each list in [targets]. A source package removed from [extras]
-    # above but left in a target would fail Pkg validation ("Dependency X in
-    # target test not listed in deps, weakdeps or extras") before resolution runs.
-    if haskey(project, "targets")
-        for (target_name, target_list) in project["targets"]
-            target_list isa AbstractVector || continue
-            for pkg in source_pkgs
-                if pkg in target_list
-                    filter!(!isequal(pkg), target_list)
-                    modified = true
-                    @info "Temporarily removing $pkg from [targets.$target_name] for resolution"
-                end
-            end
-        end
-    end
-
-    # Remove empty [sources] section
-    if haskey(project, "sources") && isempty(project["sources"])
-        delete!(project, "sources")
-    end
-
-    if modified
-        open(project_file, "w") do io
-            TOML.print(io, project)
-        end
-        return original_content
-    end
-
     return nothing
 end
 
 """
-    restore_project_file(project_file, original_content)
+    collect_direct_runtime_path_sources(project_file) -> Vector{DirectRuntimePathSource}
 
-Restore the original Project.toml content after resolution.
+Collect direct local path packages that occur in both runtime `[deps]` and
+`[sources]` in `project_file`. Nested path sources are intentionally not
+traversed.
 """
-function restore_project_file(project_file::String, original_content::Union{
-        String, Nothing})
-    if original_content !== nothing
-        write(project_file, original_content)
-        @info "Restored original Project.toml"
+function collect_direct_runtime_path_sources(project_file::String)
+    root_file = abspath(project_file)
+    root_dir = dirname(root_file)
+    root_project = TOML.parsefile(root_file)
+    deps = get(root_project, "deps", Dict{String, Any}())
+    sources = get(root_project, "sources", Dict{String, Any}())
+    result = DirectRuntimePathSource[]
+
+    for name in sort!(collect(keys(sources)))
+        haskey(deps, name) || continue
+        source = sources[name]
+        source isa AbstractDict || continue
+        haskey(source, "path") || continue
+
+        source_dir = normpath(abspath(joinpath(root_dir, source["path"])))
+        source_file = find_project_file(source_dir)
+        source_file === nothing &&
+            error("Path source $name from $root_file has no project file at $source_dir")
+        source_project = TOML.parsefile(source_file)
+        declared_name = get(source_project, "name", name)
+        declared_name == name ||
+            error("Path source $name from $root_file declares package name $declared_name")
+        declared_uuid = get(source_project, "uuid", nothing)
+        declared_uuid == deps[name] || error(
+            "Path source $name from $root_file has uuid $declared_uuid, expected $(deps[name])"
+        )
+        push!(result, DirectRuntimePathSource(name, source_project))
     end
+
+    return result
+end
+
+"""
+    add_direct_path_source_dependencies!(merged, project_files)
+
+Add hard registry dependencies that are missing from `merged` but required by a
+direct runtime path source in `project_files`. Dependencies already owned by the
+root project keep the root UUID and compat unchanged. When two path sources add
+the same missing dependency, their UUIDs and any compat strings must agree.
+
+This intentionally does not traverse nested path sources, include dependencies
+from a path package's `[weakdeps]`, or intersect differing compat specifications.
+The locked package build and tests remain responsible for validating root-owned
+dependency versions against the path package.
+"""
+function add_direct_path_source_dependencies!(merged, project_files::Vector{String})
+    path_sources = reduce(
+        vcat, collect_direct_runtime_path_sources.(project_files);
+        init = DirectRuntimePathSource[]
+    )
+    isempty(path_sources) && return
+
+    deps = get!(merged, "deps", Dict{String, Any}())
+    compat = get!(merged, "compat", Dict{String, Any}())
+    weakdeps = get(merged, "weakdeps", Dict{String, Any}())
+    root_owned = Set(keys(deps))
+    local_source_names = Set(source.name for source in path_sources)
+    promoted_by = Dict{String, String}()
+
+    for source in path_sources
+        source_deps = get(source.project, "deps", Dict{String, Any}())
+        source_compat = get(source.project, "compat", Dict{String, Any}())
+        for name in sort!(collect(keys(source_deps)))
+            uuid = source_deps[name]
+            if name in local_source_names
+                @info "Leaving direct path dependency $name local while reading $(source.name)"
+                continue
+            end
+
+            if name in root_owned
+                deps[name] == uuid || error(
+                    "Root dependency $name has uuid $(deps[name]), but path source " *
+                    "$(source.name) requires $uuid"
+                )
+                continue
+            end
+
+            if haskey(weakdeps, name)
+                weakdeps[name] == uuid || error(
+                    "Root weak dependency $name has uuid $(weakdeps[name]), but path " *
+                    "source $(source.name) requires $uuid"
+                )
+                deps[name] = uuid
+                delete!(weakdeps, name)
+                isempty(weakdeps) && delete!(merged, "weakdeps")
+                push!(root_owned, name)
+                @info "Promoting root weak dependency required by $(source.name): $name"
+                continue
+            end
+
+            constraint = get(source_compat, name, nothing)
+            if haskey(promoted_by, name)
+                deps[name] == uuid || error(
+                    "Path sources $(promoted_by[name]) and $(source.name) require " *
+                    "$name with different uuids $(deps[name]) and $uuid"
+                )
+                if constraint !== nothing && haskey(compat, name) &&
+                        compat[name] != constraint
+                    error(
+                        "Path sources $(promoted_by[name]) and $(source.name) require " *
+                        "$name with different compat entries $(compat[name]) and $constraint"
+                    )
+                elseif constraint !== nothing
+                    compat[name] = constraint
+                end
+                continue
+            end
+
+            deps[name] = uuid
+            promoted_by[name] = source.name
+            if constraint !== nothing
+                if haskey(compat, name) && compat[name] != constraint
+                    error(
+                        "Project compat for promoted dependency $name is $(compat[name]), " *
+                        "but path source $(source.name) requires $constraint"
+                    )
+                end
+                compat[name] = constraint
+            end
+            @info "Adding runtime dependency from direct path source $(source.name): $name"
+        end
+    end
+    return
 end
 
 """
@@ -250,8 +316,7 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     # own unregistered lib/* sources). The merge logic below already skips ADDING
     # source packages from extras/test-deps, but a source package listed directly
     # in the main project's [deps] (a monorepo root depending on its siblings)
-    # would otherwise survive the deepcopy. This mirrors the non-merged path's
-    # remove_source_packages_from_project. They are re-added to the manifest as
+    # would otherwise survive the deepcopy. They are re-added to the manifest as
     # path deps after resolution (add_source_packages_to_manifest).
     for section_name in ("deps", "compat", "sources")
         if haskey(merged, section_name)
@@ -356,6 +421,10 @@ function create_merged_project(main_project_file::String, test_project_file::Str
     if haskey(merged, "weakdeps") && isempty(merged["weakdeps"])
         delete!(merged, "weakdeps")
     end
+
+    project_files = main_project_file == test_project_file ?
+                    [main_project_file] : [main_project_file, test_project_file]
+    add_direct_path_source_dependencies!(merged, project_files)
 
     # Write merged project
     mkpath(merged_dir)
@@ -535,7 +604,7 @@ function set_manifest_project_hash(manifest_file::String, project_file::String)
 end
 
 """
-    add_source_packages_to_manifest(manifest_file, project_file, dir, source_pkgs)
+    add_source_packages_to_manifest(manifest_file, project_file, manifest_dir, source_pkgs)
 
 Re-add local path-sourced packages to `manifest_file` after resolution.
 
@@ -549,8 +618,7 @@ written back as a path dependency pointing at the same location given in
 
 Note: only packages that are themselves in `[deps]` need to be in this manifest;
 packages sourced solely for a test target are not part of the resolved
-environment. The path packages' own (unique) transitive dependencies are not
-re-resolved here, so a fully locked test of those is out of scope for this step.
+environment. Nested path sources are not followed.
 
 If the resolver already emitted a registry entry for a source package (which
 happens whenever another resolved package depends on it), that entry is removed
@@ -560,7 +628,7 @@ dependency on ... is ambiguous". The path source must win, since that is the
 whole point of the `[sources]` override.
 """
 function add_source_packages_to_manifest(
-        manifest_file::String, project_file::String, dir::AbstractString, source_pkgs)
+        manifest_file::String, project_file::String, manifest_dir::AbstractString, source_pkgs)
     isempty(source_pkgs) && return
     if !isfile(manifest_file)
         @warn "Manifest file not found: $manifest_file"
@@ -570,6 +638,8 @@ function add_source_packages_to_manifest(
     project = TOML.parsefile(project_file)
     sources = get(project, "sources", Dict())
     deps = get(project, "deps", Dict())
+    project_dir = dirname(abspath(project_file))
+    manifest_dir = abspath(manifest_dir)
 
     entry_lines = String[]
     added_pkgs = String[]
@@ -580,16 +650,20 @@ function add_source_packages_to_manifest(
         src = get(sources, pkg, nothing)
         (src isa Dict && haskey(src, "path")) || continue
 
-        pkg_path = src["path"]
-        candidates = [joinpath(dir, pkg_path, "Project.toml"),
-                      joinpath(dir, pkg_path, "JuliaProject.toml")]
+        source_path = normpath(joinpath(project_dir, src["path"]))
+        pkg_path = relpath(source_path, manifest_dir)
+        candidates = [joinpath(source_path, "Project.toml"),
+                      joinpath(source_path, "JuliaProject.toml")]
         filter!(isfile, candidates)
         uuid = get(deps, pkg, nothing)
         version = nothing
+        hard_deps = String[]
         if !isempty(candidates)
             pkg_project = TOML.parsefile(first(candidates))
             uuid = get(pkg_project, "uuid", uuid)
             version = get(pkg_project, "version", nothing)
+            append!(hard_deps, keys(get(pkg_project, "deps", Dict{String, Any}())))
+            sort!(hard_deps)
         end
         if uuid === nothing
             @warn "Could not determine uuid for source package $pkg, skipping manifest entry"
@@ -597,6 +671,7 @@ function add_source_packages_to_manifest(
         end
 
         push!(entry_lines, "[[deps.$pkg]]")
+        isempty(hard_deps) || push!(entry_lines, "deps = $(repr(hard_deps))")
         push!(entry_lines, "path = \"$pkg_path\"")
         push!(entry_lines, "uuid = \"$uuid\"")
         version !== nothing && push!(entry_lines, "version = \"$version\"")
@@ -632,8 +707,8 @@ end
 """
     resolve_directory(dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote)
 
-Resolve dependencies for a single directory. Handles source packages by temporarily
-removing them from the project file, running the resolver, and then restoring the original.
+Resolve dependencies for a single directory. Source packages are omitted from a
+temporary merged project and restored to the resolved manifest as path entries.
 Returns the source packages found in the directory (for use in forcedeps checking).
 """
 function resolve_directory(
@@ -676,24 +751,26 @@ function resolve_directory(
             rm(merged_dir, recursive = true)
         end
     else
-        # Handle packages with [sources] entries (e.g., test/Project.toml referencing main package)
-        # These packages cannot be resolved from the registry, so we temporarily remove them
         source_pkgs = get_source_packages(project_file)
-        original_content = remove_source_packages_from_project(project_file, source_pkgs)
-
-        try
+        if isempty(source_pkgs)
             @info "Running resolver on $dir with --min=@$resolver_mode"
             run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
             @info "Successfully resolved minimal versions for $dir"
-        finally
-            # Always restore the original Project.toml, even if resolution fails
-            restore_project_file(project_file, original_content)
-        end
+        else
+            merged_dir = mktempdir()
+            source_pkgs = create_merged_project(
+                project_file, project_file, merged_dir; no_promote
+            )
+            try
+                @info "Running resolver on $dir with path-source constraints and --min=@$resolver_mode"
+                run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+                @info "Successfully resolved minimal versions for $dir with path-source constraints"
+                merged_manifest = joinpath(merged_dir, "Manifest.toml")
+                isfile(merged_manifest) && cp(merged_manifest, manifest_file; force = true)
+            finally
+                rm(merged_dir, recursive = true)
+            end
 
-        # Re-add local path-sourced packages (removed for resolution) to the manifest
-        # so the resolved environment is complete enough to instantiate/build (#3021),
-        # then refresh the project hash so Pkg sees the manifest as up to date.
-        if !isempty(source_pkgs)
             add_source_packages_to_manifest(manifest_file, project_file, dir, source_pkgs)
         end
         set_manifest_project_hash(manifest_file, project_file)
@@ -966,6 +1043,18 @@ if do_merge
         # This is needed for workspace projects where the test project depends on the main package
         add_main_package_to_manifest(main_manifest, main_project_file; path = ".")
         add_main_package_to_manifest(test_manifest, main_project_file; path = "..")
+        main_source_pkgs = get_source_packages(main_project_file)
+        test_source_pkgs = get_source_packages(test_project_file)
+        for (manifest, manifest_dir) in (
+                (main_manifest, main_dir), (test_manifest, test_dir)
+            )
+            add_source_packages_to_manifest(
+                manifest, main_project_file, manifest_dir, main_source_pkgs
+            )
+            add_source_packages_to_manifest(
+                manifest, test_project_file, manifest_dir, test_source_pkgs
+            )
+        end
 
         # Ensure each manifest has the project hash corresponding to the project
         # that will consume it (main root and test environment respectively).

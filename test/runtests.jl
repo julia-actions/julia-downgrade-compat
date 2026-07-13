@@ -972,6 +972,355 @@ end
         end
     end
 
+    @testset "direct path-source runtime dependencies participate in minimum resolution" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkpath("LocalA/src")
+                write(
+                    "LocalA/Project.toml",
+                    """
+                    name = "LocalA"
+                    uuid = "11111111-1111-1111-1111-111111111111"
+                    version = "0.1.0"
+
+                    [deps]
+                    DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+                    [compat]
+                    DataStructures = "0.18"
+                    julia = "1.10"
+                    JSON = "0.21"
+                    StaticArrays = "1.9.8"
+                    """
+                )
+                write(
+                    "LocalA/src/LocalA.jl",
+                    "module LocalA\nusing DataStructures, JSON, StaticArrays\nend\n"
+                )
+
+                mkpath("LocalB/src")
+                write(
+                    "LocalB/Project.toml",
+                    """
+                    name = "LocalB"
+                    uuid = "22222222-2222-2222-2222-222222222222"
+                    version = "0.1.0"
+
+                    [deps]
+                    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+                    [compat]
+                    julia = "1.10"
+                    StaticArrays = "1.9.8"
+                    """
+                )
+                write("LocalB/src/LocalB.jl", "module LocalB\nusing StaticArrays\nend\n")
+
+                mkpath("src")
+                mkpath("test")
+                write("src/RootPkg.jl", "module RootPkg\nusing LocalA, LocalB\nend\n")
+                write(
+                    "test/runtests.jl",
+                    "using Test, BenchmarkTools, RootPkg\n@test true\n"
+                )
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "33333333-3333-3333-3333-333333333333"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                    LocalA = "11111111-1111-1111-1111-111111111111"
+                    LocalB = "22222222-2222-2222-2222-222222222222"
+
+                    [sources]
+                    LocalA = {path = "LocalA"}
+                    LocalB = {path = "LocalB"}
+
+                    [compat]
+                    DataStructures = "0.18.0"
+                    julia = "1.10"
+                    BenchmarkTools = "1.5.0"
+                    JSON = "0.21.4"
+                    LocalA = "0.1"
+                    LocalB = "0.1"
+
+                    [weakdeps]
+                    DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+
+                    [extras]
+                    BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+                    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+                    [targets]
+                    test = ["BenchmarkTools", "Test"]
+                    """
+                )
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "alldeps" "1"`)
+
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+                @test only(deps["DataStructures"])["version"] == "0.18.0"
+                @test only(deps["StaticArrays"])["version"] == "1.9.8"
+                @test only(deps["JSON"])["version"] == "0.21.4"
+                @test only(deps["BenchmarkTools"])["version"] == "1.5.0"
+                local_a = only(deps["LocalA"])
+                local_b = only(deps["LocalB"])
+                @test local_a["path"] == "LocalA"
+                @test Set(local_a["deps"]) ==
+                      Set(["DataStructures", "JSON", "StaticArrays"])
+                @test local_b["path"] == "LocalB"
+                @test Set(local_b["deps"]) == Set(["StaticArrays"])
+                run(`$(Base.julia_cmd()) --project=. -e 'using Pkg; Pkg.test(; allow_reresolve = false)'`)
+
+                restored = TOML.parsefile("Project.toml")
+                @test Set(keys(restored["sources"])) == Set(["LocalA", "LocalB"])
+                @test haskey(restored["weakdeps"], "DataStructures")
+                @test !haskey(restored["deps"], "DataStructures")
+                @test !haskey(restored["deps"], "StaticArrays")
+            end
+        end
+    end
+
+    @testset "split projects rebase direct path sources in both locked manifests" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkpath("LocalDep/src")
+                write(
+                    "LocalDep/Project.toml",
+                    """
+                    name = "LocalDep"
+                    uuid = "99999999-9999-9999-9999-999999999999"
+                    version = "0.1.0"
+
+                    [deps]
+                    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+                    [compat]
+                    StaticArrays = "1.9.8"
+                    """
+                )
+                write("LocalDep/src/LocalDep.jl", "module LocalDep\nusing StaticArrays\nend\n")
+
+                mkpath("src")
+                mkpath("test")
+                write("src/RootPkg.jl", "module RootPkg\nusing LocalDep\nend\n")
+                write(
+                    "test/runtests.jl",
+                    "using Test, BenchmarkTools, RootPkg\n@test true\n"
+                )
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                    LocalDep = "99999999-9999-9999-9999-999999999999"
+
+                    [sources]
+                    LocalDep = {path = "LocalDep"}
+
+                    [compat]
+                    julia = "1.10"
+                    JSON = "0.21.4"
+                    LocalDep = "0.1"
+                    """
+                )
+                write(
+                    "test/Project.toml",
+                    """
+                    [deps]
+                    BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+                    RootPkg = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+                    [sources]
+                    RootPkg = {path = ".."}
+
+                    [compat]
+                    BenchmarkTools = "1.5.0"
+                    """
+                )
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" ".,test" "alldeps" "1"`)
+
+                main_manifest = TOML.parsefile("Manifest.toml")
+                test_manifest = TOML.parsefile("test/Manifest.toml")
+                main_deps = main_manifest["deps"]
+                test_deps = test_manifest["deps"]
+                @test only(main_deps["StaticArrays"])["version"] == "1.9.8"
+                @test only(main_deps["JSON"])["version"] == "0.21.4"
+                @test only(main_deps["BenchmarkTools"])["version"] == "1.5.0"
+                @test only(main_deps["LocalDep"])["path"] == "LocalDep"
+                @test only(test_deps["LocalDep"])["path"] == "../LocalDep"
+                @test only(main_deps["RootPkg"])["path"] == "."
+                @test only(test_deps["RootPkg"])["path"] == ".."
+                @test Set(only(test_deps["RootPkg"])["deps"]) == Set(["JSON", "LocalDep"])
+
+                locked = Dict(
+                    name => only(test_deps[name])["version"]
+                    for name in ("BenchmarkTools", "JSON", "StaticArrays")
+                )
+                run(`$(Base.julia_cmd()) --project=test -e 'using Pkg; Pkg.instantiate(); include("test/runtests.jl")'`)
+                after = TOML.parsefile("test/Manifest.toml")["deps"]
+                @test locked == Dict(
+                    name => only(after[name])["version"] for name in keys(locked)
+                )
+            end
+        end
+    end
+
+    @testset "locked tests reject an incompatible root-owned path dependency floor" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkpath("LocalDep/src")
+                write(
+                    "LocalDep/Project.toml",
+                    """
+                    name = "LocalDep"
+                    uuid = "77777777-7777-7777-7777-777777777777"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+
+                    [compat]
+                    JSON = "0.20"
+                    """
+                )
+                write("LocalDep/src/LocalDep.jl", "module LocalDep\nusing JSON\nend\n")
+
+                mkpath("src")
+                mkpath("test")
+                write("src/RootPkg.jl", "module RootPkg\nusing LocalDep\nend\n")
+                write("test/runtests.jl", "using Test, RootPkg\n@test true\n")
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "88888888-8888-8888-8888-888888888888"
+                    version = "0.1.0"
+
+                    [deps]
+                    JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                    LocalDep = "77777777-7777-7777-7777-777777777777"
+
+                    [sources]
+                    LocalDep = {path = "LocalDep"}
+
+                    [compat]
+                    julia = "1.10"
+                    JSON = "=0.21.4"
+                    LocalDep = "0.1"
+
+                    [extras]
+                    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+                    [targets]
+                    test = ["Test"]
+                    """
+                )
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
+                manifest = TOML.parsefile("Manifest.toml")
+                @test only(manifest["deps"]["JSON"])["version"] == "0.21.4"
+
+                output = IOBuffer()
+                process = run(
+                    pipeline(
+                        `$(Base.julia_cmd()) --project=. -e 'using Pkg; Pkg.test(; allow_reresolve = false)'`;
+                        stdout = output, stderr = output
+                    ); wait = false
+                )
+                wait(process)
+                log = String(take!(output))
+                @test !success(process)
+                @test occursin("JSON", log)
+                @test occursin("compat", lowercase(log)) || occursin("0.20", log)
+            end
+        end
+    end
+
+    @testset "direct path sources reject different compat for a promoted dependency" begin
+        mktempdir() do dir
+            cd(dir) do
+                for (name, uuid, constraint) in (
+                        ("LocalA", "44444444-4444-4444-4444-444444444444", "1.9.8"),
+                        ("LocalB", "66666666-6666-6666-6666-666666666666", "1.9.9")
+                    )
+                    mkpath("$name/src")
+                    write(
+                        "$name/Project.toml",
+                        """
+                        name = "$name"
+                        uuid = "$uuid"
+                        version = "0.1.0"
+
+                        [deps]
+                        StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+                        [compat]
+                        StaticArrays = "$constraint"
+                        """
+                    )
+                    write("$name/src/$name.jl", "module $name\nend\n")
+                end
+                mkdir("test")
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "55555555-5555-5555-5555-555555555555"
+                    version = "0.1.0"
+
+                    [deps]
+                    LocalA = "44444444-4444-4444-4444-444444444444"
+
+                    [sources]
+                    LocalA = {path = "LocalA"}
+
+                    [compat]
+                    julia = "1.10"
+                    LocalA = "0.1"
+                    """
+                )
+                write(
+                    "test/Project.toml",
+                    """
+                    [deps]
+                    LocalB = "66666666-6666-6666-6666-666666666666"
+                    RootPkg = "55555555-5555-5555-5555-555555555555"
+
+                    [sources]
+                    LocalB = {path = "../LocalB"}
+                    RootPkg = {path = ".."}
+
+                    [compat]
+                    LocalB = "0.1"
+                    """
+                )
+
+                output = IOBuffer()
+                process = run(
+                    pipeline(
+                        `$(Base.julia_cmd()) $downgrade_jl "" ".,test" "deps" "1.10"`;
+                        stdout = output, stderr = output
+                    ); wait = false
+                )
+                wait(process)
+                @test !success(process)
+                @test occursin("different compat entries", String(take!(output)))
+            end
+        end
+    end
+
     @testset "no_promote keeps a named weakdep extension out of the joint resolve" begin
         # The merged resolution promotes every weakdep test-extra into ONE joint
         # floor-resolve -- correct, because the extensions coexist in a single test
