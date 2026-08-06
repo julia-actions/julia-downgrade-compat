@@ -22,7 +22,7 @@ Bar = "0.1.2"
 Often these compat entries get forgotten about once set. For instance, suppose the latest
 version of Foo is v1.4.0, and your package now relies on some feature of Foo v1.4 that is
 not present in Foo v1.2. Your package tests will still succeed, because by default they run
-with the latest versions of all dependencies, including Foo v1.4.
+with the latest versions of all dependencies, including Foo v1.4. This is because [Pkg.jl treats](https://pkgdocs.julialang.org/v1/compatibility/#Caret-specifiers) `"1.2.3"` is the same as `"^1.2.3"`, which allows the range of `[1.2.3, 2.0.0)`
 
 This action uses Resolver.jl to find the actual minimal versions that satisfy all constraints,
 creating a Manifest.toml with these minimal versions. When your tests run, they'll use these
