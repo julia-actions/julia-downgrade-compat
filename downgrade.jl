@@ -566,13 +566,13 @@ end
     add_direct_path_source_dependencies!(merged, project_files)
 
 Add hard registry dependencies that are missing from `merged` but required by a
-path source active at runtime or in `[targets].test`. Dependencies
-already owned by the root project keep the root UUID, and their compat is
-intersected with each path source's constraint. When two path sources add the
-same missing dependency, their UUIDs must agree and their compat constraints are
-intersected.
+path source active at runtime or in `[targets].test`. Dependencies already owned
+by the root project keep the root UUID, and their compat is intersected with each
+path source's constraint. When two path sources add the same missing dependency,
+their UUIDs must agree and their compat constraints are intersected.
 
-This does not include dependencies from a path package's `[weakdeps]`.
+A path source's weak dependencies remain weak in the merged project, but their
+UUIDs and compat constraints participate when another package installs them.
 """
 function add_direct_path_source_dependencies!(merged, project_files::Vector{String})
     path_sources = reduce(
@@ -583,13 +583,14 @@ function add_direct_path_source_dependencies!(merged, project_files::Vector{Stri
 
     deps = get!(merged, "deps", Dict{String, Any}())
     compat = get!(merged, "compat", Dict{String, Any}())
-    weakdeps = get(merged, "weakdeps", Dict{String, Any}())
+    weakdeps = get!(merged, "weakdeps", Dict{String, Any}())
     root_owned = Set(keys(deps))
     local_source_names = Set(source.name for source in path_sources)
     promoted_by = Dict{String, String}()
 
     for source in path_sources
         source_deps = get(source.project, "deps", Dict{String, Any}())
+        source_weakdeps = get(source.project, "weakdeps", Dict{String, Any}())
         source_compat = get(source.project, "compat", Dict{String, Any}())
         for name in sort!(collect(keys(source_deps)))
             uuid = source_deps[name]
@@ -651,7 +652,31 @@ function add_direct_path_source_dependencies!(merged, project_files::Vector{Stri
             end
             @info "Adding runtime dependency from direct path source $(source.name): $name"
         end
+
+        for name in sort!(collect(keys(source_weakdeps)))
+            name in local_source_names && continue
+
+            uuid = source_weakdeps[name]
+            if haskey(deps, name)
+                deps[name] == uuid || error(
+                    "Dependency $name has uuid $(deps[name]), but path source " *
+                        "$(source.name) requires weak dependency $uuid"
+                )
+            elseif haskey(weakdeps, name)
+                weakdeps[name] == uuid || error(
+                    "Weak dependency $name has uuid $(weakdeps[name]), but path source " *
+                        "$(source.name) requires $uuid"
+                )
+            else
+                weakdeps[name] = uuid
+            end
+            merge_compat_constraint!(
+                compat, name, get(source_compat, name, nothing),
+                "Project and path source $(source.name)"
+            )
+        end
     end
+    isempty(weakdeps) && delete!(merged, "weakdeps")
     return
 end
 

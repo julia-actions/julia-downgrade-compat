@@ -1434,6 +1434,67 @@ end
         end
     end
 
+    @testset "direct path-source weakdep compat constrains promoted dependencies" begin
+        mktempdir() do dir
+            cd(dir) do
+                mkpath("LocalDep/src")
+                write(
+                    "LocalDep/Project.toml",
+                    """
+                    name = "LocalDep"
+                    uuid = "11111111-1111-1111-1111-111111111111"
+                    version = "0.1.0"
+
+                    [weakdeps]
+                    OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+
+                    [compat]
+                    julia = "1.10"
+                    OrderedCollections = "=1.8.1"
+                    """
+                )
+                write("LocalDep/src/LocalDep.jl", "module LocalDep\nend\n")
+
+                mkpath("src")
+                mkpath("test")
+                write("src/RootPkg.jl", "module RootPkg\nusing LocalDep\nend\n")
+                write("test/runtests.jl", "using Test, DataStructures, RootPkg\n@test true\n")
+                write(
+                    "Project.toml",
+                    """
+                    name = "RootPkg"
+                    uuid = "22222222-2222-2222-2222-222222222222"
+                    version = "0.1.0"
+
+                    [deps]
+                    DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+                    LocalDep = "11111111-1111-1111-1111-111111111111"
+
+                    [sources]
+                    LocalDep = {path = "LocalDep"}
+
+                    [compat]
+                    DataStructures = "0.18"
+                    julia = "1.10"
+                    LocalDep = "0.1"
+
+                    [extras]
+                    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+                    [targets]
+                    test = ["Test"]
+                    """
+                )
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "alldeps" "1"`)
+
+                manifest = TOML.parsefile("Manifest.toml")
+                @test only(manifest["deps"]["OrderedCollections"])["version"] == "1.8.1"
+                run(`$(Base.julia_cmd()) --project=. -e 'using Pkg; Pkg.test(; allow_reresolve = false)'`)
+            end
+        end
+    end
+
     @testset "nested path sources remain local and constrain minimum resolution" begin
         mktempdir() do dir
             cd(dir) do
