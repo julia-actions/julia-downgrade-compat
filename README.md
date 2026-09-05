@@ -166,15 +166,18 @@ minimum this action resolved for a name reachable only through `[extras]` or
 `allow_reresolve: false`. The downgrade job then passes against versions it never
 meant to test.
 
-The action therefore promotes each floor-resolved test extra to `[deps]` in the
-checkout, so those names are on the path `Pkg.test` preserves. A promoted name
-that was a weak dependency is removed from `[weakdeps]`, since Pkg does not
-accept it in both tables; its `[extensions]` entry is untouched and the
-extension still loads. Only names the resolution actually placed in the manifest
-are promoted, so `no_promote` entries and stdlibs are left alone.
+For floor-resolved registry test extras, the action uses Julia's
+[shared-manifest support](https://julialang.org/blog/2023/04/julia-1.9-highlights/):
+it writes `.julia-downgrade-compat/Manifest.toml` and points the project's
+`manifest` field there. This keeps test-only manifest entries available to
+`Pkg.build` and `Pkg.test`, including versions with build metadata, while preserving the
+original `[deps]`, `[extras]`, `[weakdeps]`, `[targets]`, and compatibility bounds.
+The ordinary `Manifest.toml` remains available as the resolver output.
 
-Like the path-source promotions above, this intentionally leaves `Project.toml`
-modified for subsequent locked build and test steps.
+Only test extras with registry entries in the resolved manifest require this
+shared manifest; `no_promote` entries and stdlibs alone do not. Path-source
+handling remains as described above. The action intentionally leaves the
+`manifest` field and shared manifest in place for subsequent locked steps.
 
 ## Downgrade Modes
 

@@ -328,26 +328,27 @@ function registry_backed_manifest_entries(manifest_file::String)
 end
 
 """
-    promote_test_target_registry_deps!(project_file, manifest_file) -> Vector{String}
+    share_test_target_manifest!(project_file, manifest_file) -> Vector{String}
 
-Promote registry-backed `[targets].test` dependencies into runtime `[deps]` and
-return the names promoted.
+Keep registry-backed `[targets].test` floors in a shared manifest and return
+the test dependency names whose graph is retained.
 
 `Pkg.test` does not run in the project environment. For an old-style layout it
 synthesizes a sandbox project out of `[deps]` plus the `[targets].test` names and
 resolves that, and a floor this action wrote to the manifest for a name reachable
 only through `[extras]`/`[weakdeps]` does not survive into the sandbox: the
 sandbox installs the newest compatible version instead, so the downgrade job
-tests versions it never meant to test and reports a false pass. Listing those
-names in `[deps]` puts them on the path `Pkg.test` does preserve.
+tests versions it never meant to test and reports a false pass. A shared manifest
+keeps the complete resolved graph available without changing dependency classification.
 
 Only names the resolution actually placed in `manifest_file` as registry
-packages are promoted. That skips `no_promote` entries (deliberately left out of
-the joint floor-resolve, so they have no floor to keep) and stdlibs, and it keeps
+packages require this shared manifest. That skips `no_promote` entries
+(deliberately left out of the joint floor-resolve, so they have no floor to keep)
+and stdlibs, and it keeps
 the project from declaring a dependency the locked manifest cannot satisfy.
 Path- and url-sourced names are left to `prepare_test_target_path_sources!`.
 """
-function promote_test_target_registry_deps!(project_file::String, manifest_file::String)
+function share_test_target_manifest!(project_file::String, manifest_file::String)
     project = TOML.parsefile(project_file)
     test_target = get(get(project, "targets", Dict{String, Any}()), "test", String[])
     isempty(test_target) && return String[]
@@ -358,7 +359,7 @@ function promote_test_target_registry_deps!(project_file::String, manifest_file:
     sources = get(project, "sources", Dict{String, Any}())
     resolved = registry_backed_manifest_entries(manifest_file)
 
-    promoted = String[]
+    retained = String[]
     for name in sort!(unique(String.(test_target)))
         haskey(deps, name) && continue
         haskey(sources, name) && continue
@@ -382,25 +383,36 @@ function promote_test_target_registry_deps!(project_file::String, manifest_file:
             "Test-target dependency $name has uuid $uuid in $project_file, " *
                 "but $resolved_uuid in $manifest_file"
         )
-        push!(promoted, name)
+        push!(retained, name)
     end
-    isempty(promoted) && return promoted
+    isempty(retained) && return retained
 
-    deps = get!(project, "deps", Dict{String, Any}())
-    for name in promoted
-        deps[name] = get(extras, name, get(weakdeps, name, nothing))
-        # A name cannot sit in both [deps] and [weakdeps]. Dropping it here
-        # matches what the merged project already did for the resolve, and the
-        # extension it triggers stays declared in [extensions] and still loads.
-        delete!(weakdeps, name)
+    shared_dir = joinpath(dirname(manifest_file), ".julia-downgrade-compat")
+    shared_manifest = joinpath(shared_dir, "Manifest.toml")
+    manifest = TOML.parsefile(manifest_file)
+    for entries in values(get(manifest, "deps", manifest))
+        entries isa AbstractVector || continue
+        for entry in entries
+            if haskey(entry, "path") && !isabspath(entry["path"])
+                entry["path"] = relpath(
+                    joinpath(dirname(manifest_file), entry["path"]), shared_dir
+                )
+            end
+        end
     end
-    isempty(weakdeps) && delete!(project, "weakdeps")
+    project["manifest"] = relpath(shared_manifest, dirname(project_file))
+    mkpath(shared_dir)
+    open(shared_manifest, "w") do io
+        TOML.print(io, manifest)
+    end
 
     open(project_file, "w") do io
         TOML.print(io, project)
     end
-    @info "Promoted old-style test dependencies into [deps] for locked Pkg.test" promoted
-    return promoted
+    set_manifest_project_hash(manifest_file, project_file)
+    set_manifest_project_hash(shared_manifest, project_file)
+    @info "Retained old-style test dependency graph in shared manifest" retained shared_manifest
+    return retained
 end
 
 """
@@ -680,6 +692,7 @@ function create_merged_project(main_project_file::String, test_project_file::Str
 
     # Remove workspace section (not needed for resolution)
     delete!(merged, "workspace")
+    delete!(merged, "manifest")
 
     # Strip in-tree [sources] path/url packages from the merged project. They are
     # not registered, so if they remain in [deps]/[compat]/[sources] the resolver
@@ -1088,7 +1101,6 @@ function resolve_directory(
                         project_file; no_promote
                     )
                 )
-                promote_test_target_registry_deps!(project_file, manifest_file)
                 add_main_package_to_manifest(manifest_file, project_file; path = ".")
                 if !isempty(source_pkgs)
                     add_source_packages_to_manifest(
@@ -1097,6 +1109,7 @@ function resolve_directory(
                     )
                 end
                 set_manifest_project_hash(manifest_file, project_file)
+                share_test_target_manifest!(project_file, manifest_file)
             end
         finally
             rm(merged_dir, recursive = true)

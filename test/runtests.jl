@@ -432,12 +432,6 @@ end
     end
 
     @testset "old-style test deps keep their floor inside Pkg.test" begin
-        # Writing the floor to the manifest is not enough for an old-style layout:
-        # Pkg.test builds a sandbox project out of [deps] plus [targets].test and
-        # resolves that, which drops a floor held only for an [extras] name and
-        # installs the newest compatible version instead -- a green downgrade job
-        # that never ran against the minimum. Promoting the resolved test extras
-        # into [deps] puts them on the path Pkg.test preserves.
         write_repro() = begin
             write(
                 "Project.toml",
@@ -450,27 +444,37 @@ end
                 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 
                 [extras]
+                Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+                Bzip2_jll = "6e34b625-4abd-537c-b88f-471c36dfa7a0"
                 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+                Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
                 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
                 [targets]
-                test = ["DataStructures", "Test"]
+                test = ["Aqua", "Bzip2_jll", "DataStructures", "Pkg", "Test"]
 
                 [compat]
                 julia = "1.10"
+                Aqua = "0.8.16"
+                Bzip2_jll = "1.0.8"
                 JSON = "0.20, 0.21"
                 DataStructures = "0.17, 0.18"
                 """,
             )
             mkdir("src")
-            write("src/ReproPkg.jl", "module ReproPkg\nend\n")
+            write("src/ReproPkg.jl", "module ReproPkg\nusing JSON\nend\n")
             mkdir("test")
             write(
                 "test/runtests.jl",
                 """
-                using ReproPkg, DataStructures, Test
+                using ReproPkg, Aqua, Bzip2_jll, DataStructures, Pkg, Test
                 println("SANDBOX_DATASTRUCTURES=", pkgversion(DataStructures))
-                @test true
+                Aqua.test_stale_deps(ReproPkg)
+                actual = Dict(info.name => string(info.version) for info in values(Pkg.dependencies()))
+                for entry in split(ENV["EXPECTED_FLOORS"], ',')
+                    name, version = split(entry, '=')
+                    @test actual[name] == version
+                end
                 """,
             )
         end
@@ -479,29 +483,39 @@ end
             cd(dir) do
                 write_repro()
                 run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
 
                 project = TOML.parsefile("Project.toml")
                 @test startswith(
                     TOML.parsefile("Manifest.toml")["deps"]["DataStructures"][1]["version"],
                     "0.17",
                 )
-                # The extra is promoted; the stdlib in the same target has no floor
-                # to keep and must be left alone.
-                @test haskey(project["deps"], "DataStructures")
+                @test !haskey(project["deps"], "DataStructures")
+                @test !haskey(project["deps"], "Bzip2_jll")
                 @test !haskey(project["deps"], "Test")
-                @test project["deps"]["DataStructures"] == project["extras"]["DataStructures"]
-                # The hash is written after the promotion, so the locked manifest
-                # still matches the project Pkg.test will read.
+                @test project["compat"]["DataStructures"] == "0.17, 0.18"
+                @test project["manifest"] == joinpath(".julia-downgrade-compat", "Manifest.toml")
                 @test TOML.parsefile("Manifest.toml")["project_hash"] ==
                     expected_project_hash(joinpath(dir, "Project.toml"))
 
                 manifest_before = read("Manifest.toml", String)
+                manifest_deps = TOML.parse(manifest_before)["deps"]
+                expected_floors = join(
+                    [
+                        name * "=" * only(entries)["version"] for (name, entries) in manifest_deps
+                            if haskey(only(entries), "git-tree-sha1")
+                    ],
+                    ',',
+                )
                 # Pkg wires the sandboxed test process's stdio to stderr, so both
                 # streams have to be captured to see what the tests printed.
                 captured = IOBuffer()
                 run(
                     pipeline(
-                        `$(Base.julia_cmd()) --project=. -e "using Pkg; Pkg.test(allow_reresolve=false)"`;
+                        addenv(
+                            `$(Base.julia_cmd()) --project=. -e "using Pkg; Pkg.build(); Pkg.test(allow_reresolve=false)"`,
+                            "EXPECTED_FLOORS" => expected_floors,
+                        );
                         stdout = captured, stderr = captured,
                     ),
                 )
@@ -553,10 +567,7 @@ end
         end
     end
 
-    @testset "promoted weakdep test extra leaves [weakdeps] and still loads" begin
-        # A test extra that is also a weakdep cannot stay in both tables, so the
-        # promotion drops it from [weakdeps]. Its [extensions] entry keeps naming
-        # it, and Pkg must still build the environment and the extension.
+    @testset "locked weakdep test extra retains [weakdeps] and still loads" begin
         mktempdir() do dir
             cd(dir) do
                 write(
@@ -594,18 +605,29 @@ end
                     "ext/ExtPkgDSExt.jl",
                     "module ExtPkgDSExt\nusing ExtPkg, DataStructures\nend\n",
                 )
+                mkdir("test")
+                write(
+                    "test/runtests.jl",
+                    "using ExtPkg, DataStructures\n" *
+                        "@assert Base.get_extension(ExtPkg, :ExtPkgDSExt) !== nothing\n" *
+                        "println(\"LOADED=\", pkgversion(DataStructures))\n",
+                )
 
                 run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10"`)
 
                 project = TOML.parsefile("Project.toml")
-                @test haskey(project["deps"], "DataStructures")
-                @test !haskey(get(project, "weakdeps", Dict()), "DataStructures")
+                @test !haskey(project["deps"], "DataStructures")
+                @test haskey(project["weakdeps"], "DataStructures")
                 @test project["extensions"]["ExtPkgDSExt"] == "DataStructures"
 
-                output = read(
-                    `$(Base.julia_cmd()) --project=. -e "using Pkg; Pkg.instantiate(); using ExtPkg, DataStructures; println(\"LOADED=\", pkgversion(DataStructures))"`,
-                    String,
+                captured = IOBuffer()
+                run(
+                    pipeline(
+                        `$(Base.julia_cmd()) --project=. -e "using Pkg; Pkg.test(; allow_reresolve=false)"`;
+                        stdout = captured, stderr = captured,
+                    ),
                 )
+                output = String(take!(captured))
                 @test occursin("LOADED=0.17", output)
             end
         end
@@ -1416,11 +1438,8 @@ end
                     Set(["DataStructures", "JSON", "Preferences", "StaticArrays"])
                 @test local_b["path"] == "LocalB"
                 @test Set(local_b["deps"]) == Set(["Preferences", "StaticArrays"])
-                # BenchmarkTools is a floor-resolved [targets].test extra, so it is
-                # promoted into [deps] to survive the Pkg.test sandbox and shows up
-                # in the root's manifest stanza alongside the declared deps.
                 @test Set(only(deps["RootPkg"])["deps"]) ==
-                    Set(["JSON", "LocalA", "LocalB", "BenchmarkTools"])
+                    Set(["JSON", "LocalA", "LocalB"])
                 run(`$(Base.julia_cmd()) --project=. -e 'using Pkg; Pkg.test(; allow_reresolve = false)'`)
 
                 restored = TOML.parsefile("Project.toml")
@@ -1429,7 +1448,7 @@ end
                 @test !haskey(restored["deps"], "DataStructures")
                 @test !haskey(restored["deps"], "Preferences")
                 @test !haskey(restored["deps"], "StaticArrays")
-                @test haskey(restored["deps"], "BenchmarkTools")
+                @test !haskey(restored["deps"], "BenchmarkTools")
             end
         end
     end
