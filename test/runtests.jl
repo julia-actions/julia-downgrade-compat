@@ -59,6 +59,66 @@ end
         end
     end
 
+    @testset "min_patch=true uses --min-patch for all packages" begin
+        mktempdir() do dir
+            cd(dir) do
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
+
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+
+                [compat]
+                julia = "1.10"
+                JSON = "0.20, 0.21"
+                DataStructures = "0.17, 0.18"
+                """
+                write("Project.toml", toml_content)
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10" "" "true"`)
+
+                @test isfile("Manifest.toml")
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+                @test haskey(deps, "JSON")
+                @test haskey(deps, "DataStructures")
+            end
+        end
+    end
+
+    @testset "min_patch with specific packages" begin
+        mktempdir() do dir
+            cd(dir) do
+                toml_content = """
+                name = "TestPackage"
+                version = "0.1.0"
+
+                [deps]
+                JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+                DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+
+                [compat]
+                julia = "1.10"
+                JSON = "0.20, 0.21"
+                DataStructures = "0.17, 0.18"
+                """
+                write("Project.toml", toml_content)
+
+                run(`$(Base.julia_cmd()) $downgrade_jl "" "." "deps" "1.10" "" "JSON"`)
+
+                @test isfile("Manifest.toml")
+                manifest = TOML.parsefile("Manifest.toml")
+                deps = manifest["deps"]
+                @test haskey(deps, "JSON")
+                @test haskey(deps, "DataStructures")
+                # DataStructures still uses --min, so it should resolve to 0.17.x
+                @test startswith(deps["DataStructures"][1]["version"], "0.17")
+            end
+        end
+    end
+
     # The resolver only accepts numeric compat specs, so setup-julia channel
     # aliases must be converted to the numeric version they actually denote
     # (lts/release/pre from the official version databases, min from the
