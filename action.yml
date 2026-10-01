@@ -16,10 +16,13 @@ inputs:
   no_promote:
     description: 'Comma-separated weakdep extensions to keep as weakdeps in the merged resolution instead of promoting them into the joint floor-resolve. Every other weakdep extension is still promoted and floor-tested together; use this only to exclude a backend that is currently unresolvable on its own (e.g. "Mooncake", whose graph Resolver.jl cannot --min-resolve).'
     default: ''
+  min_patch:
+    description: 'Set to "true" to use --min-patch instead of --min for all packages, or a comma-separated list of package names to apply --min-patch only to those packages (alongside --min for the rest).'
+    default: ''
 runs:
   using: "composite"
   steps:
-    - run: julia --color=yes "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}" "${{ inputs.no_promote }}"
+    - run: julia --color=yes "${{ github.action_path }}/downgrade.jl" "${{ inputs.skip }}" "${{ inputs.projects }}" "${{ inputs.mode }}" "${{ inputs.julia_version }}" "${{ inputs.no_promote }}" "${{ inputs.min_patch }}"
       shell: bash
 branding:
   icon: trending-down

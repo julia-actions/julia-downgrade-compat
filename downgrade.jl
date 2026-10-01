@@ -17,6 +17,14 @@ julia_version = length(ARGS) >= 4 ? ARGS[4] : current_julia_minor
 # floor-tested jointly.
 no_promote = length(ARGS) >= 5 ? filter(!isempty, map(strip, split(ARGS[5], ","))) : String[]
 
+min_patch_raw = length(ARGS) >= 6 ? strip(ARGS[6]) : ""
+min_patch_all = min_patch_raw == "true"
+min_patch_pkgs = if min_patch_all || isempty(min_patch_raw)
+    String[]
+else
+    filter(!isempty, map(strip, split(min_patch_raw, ",")))
+end
+
 # The resolver only accepts numeric compat specs, so setup-julia channel
 # aliases ("lts", "pre", "min", "nightly", ...) must be converted to a numeric
 # major.minor first. Each alias is resolved to what it actually denotes (the
@@ -1044,7 +1052,7 @@ function add_source_packages_to_manifest(
 end
 
 """
-    resolve_directory(dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote)
+    resolve_directory(dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote, min_flags)
 
 Resolve dependencies for a single directory. Source packages are omitted from a
 temporary merged project and restored to the resolved manifest as path entries.
@@ -1053,7 +1061,7 @@ Returns the source packages found in the directory (for use in forcedeps checkin
 function resolve_directory(
         dir::AbstractString, resolver_path::AbstractString, resolver_mode::AbstractString,
         julia_version::AbstractString, mode::AbstractString, ignore_pkgs,
-        no_promote = String[])
+        no_promote, min_flags::Cmd)
     project_files = [joinpath(dir, "Project.toml"), joinpath(dir, "JuliaProject.toml")]
     filter!(isfile, project_files)
     isempty(project_files) &&
@@ -1072,8 +1080,8 @@ function resolve_directory(
             project_file, project_file, merged_dir; no_promote)
 
         try
-            @info "Running resolver on merged project (extras) for $dir with --min=@$resolver_mode"
-            run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+            @info "Running resolver on merged project (extras) for $dir"
+            run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir $min_flags --julia=$julia_version`)
             @info "Successfully resolved minimal versions for $dir (with extras)"
 
             # Copy manifest back to the project directory
@@ -1104,8 +1112,8 @@ function resolve_directory(
     else
         source_pkgs = get_source_packages(project_file)
         if isempty(source_pkgs)
-            @info "Running resolver on $dir with --min=@$resolver_mode"
-            run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir --min=@$resolver_mode --julia=$julia_version`)
+            @info "Running resolver on $dir"
+            run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $dir $min_flags --julia=$julia_version`)
             @info "Successfully resolved minimal versions for $dir"
         else
             merged_dir = mktempdir()
@@ -1113,8 +1121,8 @@ function resolve_directory(
                 project_file, project_file, merged_dir; no_promote
             )
             try
-                @info "Running resolver on $dir with path-source constraints and --min=@$resolver_mode"
-                run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+                @info "Running resolver on $dir with path-source constraints"
+                run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir $min_flags --julia=$julia_version`)
                 @info "Successfully resolved minimal versions for $dir with path-source constraints"
                 merged_manifest = joinpath(merged_dir, "Manifest.toml")
                 isfile(merged_manifest) && cp(merged_manifest, manifest_file; force = true)
@@ -1175,6 +1183,11 @@ function check_for_workspace(project_file::String)
 end
 
 @info "Using Resolver.jl with mode: $mode"
+if min_patch_all
+    @info "Using --min-patch for all packages"
+elseif !isempty(min_patch_pkgs)
+    @info "Using --min-patch for packages: $(join(min_patch_pkgs, ", "))"
+end
 
 # Clone the resolver
 resolver_path = mktempdir()
@@ -1343,6 +1356,14 @@ end
 # For forcedeps, we use "deps" mode and then verify the results
 resolver_mode = mode == "forcedeps" ? "deps" : mode
 
+min_flags = if min_patch_all
+    `--min-patch=@$resolver_mode`
+elseif !isempty(min_patch_pkgs)
+    `--min=@$resolver_mode --min-patch=$(join(min_patch_pkgs, ","))`
+else
+    `--min=@$resolver_mode`
+end
+
 # Check for workspaces in main project and warn if detected
 main_project_candidates = ["./Project.toml", "./JuliaProject.toml"]
 for candidate in main_project_candidates
@@ -1376,8 +1397,8 @@ if do_merge
         main_project_file, test_project_file, merged_dir; no_promote)
 
     # Run resolver on merged project
-    @info "Running resolver on merged project with --min=@$resolver_mode"
-    run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir --min=@$resolver_mode --julia=$julia_version`)
+    @info "Running resolver on merged project"
+    run(`$(Base.julia_cmd()) --project=$resolver_path/bin $resolver_path/bin/resolve.jl $merged_dir $min_flags --julia=$julia_version`)
     @info "Successfully resolved minimal versions for merged project"
 
     # Copy manifest to main project directory
@@ -1463,12 +1484,12 @@ if do_merge
     other_dirs = filter(d -> normpath(d) != main_dir && normpath(d) != test_dir, dirs)
     for dir in other_dirs
         resolve_directory(
-            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote)
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote, min_flags)
     end
 else
     # Independent resolution: process each directory separately
     for dir in dirs
         resolve_directory(
-            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote)
+            dir, resolver_path, resolver_mode, julia_version, mode, ignore_pkgs, no_promote, min_flags)
     end
 end
